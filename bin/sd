@@ -1,23 +1,855 @@
 #!/usr/bin/env bash
-# sd: run scripts by path-like words. See SPEC.md.
+# sd: run scripts by path-like words. See SPEC.md; section numbers (§n) refer to it.
+# Same structure as src/sd.psm1 (the PowerShell core), written for bash 3.2: no associative arrays,
+# mapfile, ${x,,}, negative indices. Functions pass results in globals (R_*, E_*, I_*, FILES, DESC, ...).
 
-# The repo folder, found through symlinks (no GNU readlink -f: it is not on macOS).
-src=${BASH_SOURCE[0]}
-while [ -h "$src" ]; do
-    dir=$(cd -P "$(dirname "$src")" && pwd)
-    src=$(readlink "$src")
-    case $src in /*) ;; *) src=$dir/$src ;; esac
-done
-repo=$(cd -P "$(dirname "$src")/.." && pwd)
+# The repo folder (for templates/), found through symlinks (no GNU readlink -f: it is not on macOS).
+sd_repo() {
+    local src=${BASH_SOURCE[0]} dir
+    while [ -h "$src" ]; do
+        dir=$(cd -P "$(dirname "$src")" && pwd)
+        src=$(readlink "$src")
+        case $src in /*) ;; *) src=$dir/$src ;; esac
+    done
+    REPO=$(cd -P "$(dirname "$src")/.." && pwd)
+}
 
 # Git for Windows: the PowerShell core does the work (SD_BASH_CORE=1 forces the bash core, for tests).
 case $(uname -s) in
     MINGW*|MSYS*)
         if [ "${SD_BASH_CORE:-}" != 1 ]; then
+            sd_repo
             # A Windows path: under MSYS_NO_PATHCONV=1 (set by sd for .sh scripts) git-bash won't convert it.
-            exec pwsh -NoLogo -NoProfile -File "$(cygpath -w "$repo/src/sd.ps1")" "$@"
+            exec pwsh -NoLogo -NoProfile -File "$(cygpath -w "$REPO/src/sd.ps1")" "$@"
         fi ;;
 esac
 
-echo "sd: the bash core is not implemented yet" >&2
-exit 1
+shopt -s nullglob                         # an empty folder globs to nothing
+shopt -u patsub_replacement 2>/dev/null   # bash 5.2: a "&" in a ${x//a/b} replacement would be special
+STATUS=0                                  # the exit code, left by sd_error and sd_with_hooks
+nl=$'\n'; tab=$'\t'
+EXTS=(.sh "")                             # runnable extensions in priority order (§5.2); "" = extensionless
+ALL_EXTS=(.bat .cmd .sh "")               # --new and --export look at every platform's files
+
+# Meta-commands: name, usage, description. (--complete is hidden.)
+M_NAME=(--help --hooks --new --which --export --import)
+M_USAGE=('' '[add|rm|on|off|edit ...]' '<path> [--bundle] [--bat | --sh]' '<word>... [args...]' '<file> <path>...' '<file> [--force]')
+M_DESC=('Show this help' 'Manage hooks' 'Create a script' 'Show what would run' 'Export scripts and hooks' 'Import an export file')
+
+# ---- Output, config, small helpers ------------------------------------------------------------
+
+sd_error()   { printf '%s: %s\n' "$CMD" "$1" >&2; STATUS=1; }
+sd_warning() { printf '%s: warning: %s\n' "$CMD" "$1" >&2; }
+
+sd_trim() { TRIM=${1#"${1%%[![:space:]]*}"}; TRIM=${TRIM%"${TRIM##*[![:space:]]}"}; }
+
+# sd_pad <string> <width> <var>: right-pads with spaces by characters (printf pads by bytes).
+sd_pad() { printf -v "$3" '%s%*s' "$1" $(($2 > ${#1} ? $2 - ${#1} : 0)) ''; }
+
+# KEY = the sort key of a name: lower case (ASCII only; no ${x,,} in bash 3.2), and "_" before "-" like PowerShell.
+sd_key() {
+    local i u=ABCDEFGHIJKLMNOPQRSTUVWXYZ l=abcdefghijklmnopqrstuvwxyz
+    KEY=${1//_/$'\001'}
+    [[ $KEY == *[A-Z]* ]] || return 0
+    for ((i = 0; i < 26; i++)); do KEY=${KEY//${u:i:1}/${l:i:1}}; done
+}
+
+sd_abs() { case $1 in /*) ABS=$1 ;; *) ABS=$PWD/$1 ;; esac; }
+
+# §3.1: ${XDG_CONFIG_HOME:-~/.config}/sd/config, then SD_ROOT on top.
+sd_config() {
+    local line file=${XDG_CONFIG_HOME:-$HOME/.config}/sd/config
+    local re='^[[:space:]]*(root|name)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$'
+    ROOT=$HOME/sd CMD=sd
+    if [ -f "$file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            if [[ $line =~ $re && -n ${BASH_REMATCH[2]} ]]; then
+                if [ "${BASH_REMATCH[1]}" = root ]; then ROOT=${BASH_REMATCH[2]}; else CMD=${BASH_REMATCH[2]}; fi
+            fi
+        done < "$file"
+    fi
+    [ -n "${SD_ROOT:-}" ] && ROOT=$SD_ROOT
+    case $ROOT in "~") ROOT=$HOME ;; "~/"*) ROOT=$HOME/${ROOT#"~/"} ;; /*) ;; *) ROOT=$PWD/$ROOT ;; esac
+    while [[ $ROOT == */ && $ROOT != / ]]; do ROOT=${ROOT%/}; done
+}
+
+# ---- Entries: what a folder contains (§5) -----------------------------------------------------
+
+# sd_files <folder> <name>: FILES = the runnable files called <name> in <folder>, best extension first.
+sd_files() {
+    local ext
+    FILES=()
+    for ext in "${EXTS[@]}"; do
+        [ -z "$ext" ] && [[ $2 == *.* ]] && continue   # name.x is only runnable with a runnable x
+        [ -f "$1/$2$ext" ] && FILES+=("$1/$2$ext")
+    done
+}
+
+# sd_lookup <folder> <name>: the entry <name> in <folder>, or status 1.
+# L_KIND (namespace|bundle|loose|conflict), L_FOLDER (its folder, if any), L_HOME (where its script files are);
+# FILES = those script files (for a conflict: the loose ones).
+sd_lookup() {
+    L_KIND= L_FOLDER= L_HOME=$1
+    [ -n "$2" ] || return 1
+    # the hooks folder is no entry at the root
+    [ -d "$1/$2" ] && ! { [ "$1" = "$ROOT" ] && [ "$2" = hooks ]; } && L_FOLDER=$1/$2
+    sd_files "$1" "$2"
+    if [ -z "$L_FOLDER" ]; then
+        [ ${#FILES[@]} -gt 0 ] || return 1
+        L_KIND=loose
+    elif [ ${#FILES[@]} -gt 0 ]; then
+        L_KIND=conflict
+    else
+        L_HOME=$L_FOLDER
+        sd_files "$L_FOLDER" "$2"
+        if [ ${#FILES[@]} -gt 0 ]; then L_KIND=bundle; else L_KIND=namespace; fi
+    fi
+}
+
+# sd_entries <folder>: E_NAME, E_KIND, E_FOLDER, E_HOME for everything in it (parallel arrays, unsorted).
+sd_entries() {
+    local p b n ext seen=$nl
+    E_NAME=() E_KIND=() E_FOLDER=() E_HOME=()
+    for p in "$1"/*; do   # the glob skips dot-entries
+        b=${p##*/} n=$b
+        if [ ! -d "$p" ] && [[ $b == *.* ]]; then
+            n=
+            for ext in "${EXTS[@]}"; do
+                if [ -n "$ext" ] && [ "$b" != "${b%"$ext"}" ]; then n=${b%"$ext"}; break; fi
+            done
+        fi
+        [ -n "$n" ] || continue
+        case $seen in *"$nl$n$nl"*) continue ;; esac
+        seen=$seen$n$nl
+        sd_lookup "$1" "$n" || continue
+        E_NAME+=("$n") E_KIND+=("$L_KIND") E_FOLDER+=("$L_FOLDER") E_HOME+=("$L_HOME")
+    done
+}
+
+# §5.1, starting in <folder>: sd_resolve <folder> <word>...
+# R_KIND is namespace (R_NAME, R_DIR), bundle|loose (R_NAME, R_FILE, R_DIR, R_ARGS, and R_LEAF R_HOME R_FOLDER
+# for descriptions), or notfound|ambiguous (R_ERR, and R_DIR for the listing).
+sd_resolve() {
+    local dir=$1 prefix= w name where
+    shift
+    R_KIND= R_NAME= R_FILE= R_DIR= R_LEAF= R_HOME= R_FOLDER= R_ERR= R_ARGS=()
+    while [ $# -gt 0 ]; do
+        w=$1; shift
+        if [[ $w == */* || $w == *\\* || $w == [-.]* ]] || ! sd_lookup "$dir" "$w"; then
+            where=${prefix%/}
+            R_KIND=notfound R_DIR=$dir R_ERR="no script or folder '$w' in ${where:-the sd root}"
+            return
+        fi
+        name=$prefix$w
+        if [ "$L_KIND" = conflict ]; then
+            R_KIND=ambiguous R_ERR="ambiguous '$name': both folder $L_FOLDER and file ${FILES[0]} exist"
+            return
+        fi
+        if [ "$L_KIND" != namespace ]; then
+            R_KIND=$L_KIND R_NAME=$name R_FILE=${FILES[0]} R_DIR=${FILES[0]%/*}
+            R_LEAF=$w R_HOME=$L_HOME R_FOLDER=$L_FOLDER R_ARGS=("$@")
+            return
+        fi
+        dir=$L_FOLDER prefix=$name/
+    done
+    R_KIND=namespace R_NAME=${prefix%/} R_DIR=$dir
+}
+
+# §5.1 step 4 (and §5.4): the error, plus the listing of the folder for a word that wasn't found.
+sd_resolve_error() {
+    sd_error "$R_ERR"
+    if [ "$R_KIND" = notfound ]; then sd_items "$R_DIR"; sd_format_items; fi
+}
+
+# ---- Descriptions and listing (§6, §7) --------------------------------------------------------
+
+# DESC = the text of the first comment line among the first 10 lines of <file>, a shebang on line 1 skipped.
+sd_file_description() {
+    local line i=0
+    DESC=
+    while [ $i -lt 10 ] && { IFS= read -r line || [ -n "$line" ]; }; do
+        sd_trim "$line"
+        if [[ $TRIM == '#'* ]] && ! { [ $i -eq 0 ] && [[ $TRIM == '#!'* ]]; }; then
+            sd_trim "${TRIM#?}"; DESC=$TRIM
+            return
+        fi
+        i=$((i + 1))
+    done 2>/dev/null < "$1"
+}
+
+# sd_describe <kind> <home> <name> <folder>: DESC from the script files, else from <folder>/.help.
+sd_describe() {
+    local f line
+    DESC=
+    [ "$1" = conflict ] && { DESC=ambiguous; return; }
+    if [ "$1" != namespace ]; then
+        sd_files "$2" "$3"
+        for f in "${FILES[@]}"; do
+            sd_file_description "$f"
+            [ -n "$DESC" ] && return
+        done
+    fi
+    if [ -n "$4" ] && [ -f "$4/.help" ]; then   # namespaces, and bundles without a comment
+        while IFS= read -r line || [ -n "$line" ]; do
+            sd_trim "$line"
+            [ -n "$TRIM" ] && { DESC=$TRIM; return; }
+        done < "$4/.help"
+    fi
+}
+
+# ORDER = the indices from the lines "<sort key><tab><index>" in $1, in key order (bytes; keys are lower-cased).
+sd_order() {
+    local line
+    ORDER=()
+    [ -n "$1" ] || return 0
+    while IFS= read -r line; do ORDER+=("${line##*$tab}"); done < <(printf '%s' "$1" | LC_ALL=C sort)
+}
+
+# Puts the I_* items into ORDER.
+sd_reorder() {
+    local i
+    local -a n=() t=() d=()
+    for i in "${ORDER[@]}"; do n+=("${I_NAME[i]}") t+=("${I_TYPE[i]}") d+=("${I_DESC[i]}"); done
+    I_NAME=("${n[@]}") I_TYPE=("${t[@]}") I_DESC=("${d[@]}")
+}
+
+# Sorts the I_* items: namespaces first, then the rest, each case-insensitively.
+sd_sort_items() {
+    local i flag keys=
+    for i in "${!I_NAME[@]}"; do
+        sd_key "${I_NAME[i]}"
+        if [ "${I_TYPE[i]}" = dir ]; then flag=0; else flag=1; fi
+        keys=$keys$flag$tab$KEY$tab$i$nl
+    done
+    sd_order "$keys"
+    sd_reorder
+}
+
+# sd_items <folder>: I_NAME, I_TYPE (dir|script|conflict|meta), I_DESC of its entries in listing order.
+sd_items() {
+    local i type
+    sd_entries "$1"
+    I_NAME=() I_TYPE=() I_DESC=()
+    for i in "${!E_NAME[@]}"; do
+        case ${E_KIND[i]} in namespace) type=dir ;; conflict) type=conflict ;; *) type=script ;; esac
+        sd_describe "${E_KIND[i]}" "${E_HOME[i]}" "${E_NAME[i]}" "${E_FOLDER[i]}"
+        I_NAME+=("${E_NAME[i]}") I_TYPE+=("$type") I_DESC+=("$DESC")
+    done
+    sd_sort_items
+}
+
+# Prints the I_* items as listing lines (§7).
+sd_format_items() {
+    local i mark width=0 line pad
+    local -a label=()
+    for i in "${!I_NAME[@]}"; do
+        label[i]=${I_NAME[i]}
+        [ "${I_TYPE[i]}" = dir ] && label[i]=${label[i]}/
+        [ ${#label[i]} -gt $width ] && width=${#label[i]}
+    done
+    for i in "${!I_NAME[@]}"; do
+        case ${I_TYPE[i]} in script) mark=▸ ;; conflict) mark='!' ;; *) mark=' ' ;; esac
+        sd_pad "${label[i]}" $width pad
+        line="$pad $mark ${I_DESC[i]}"
+        printf '%s\n' "${line%"${line##*[![:space:]]}"}"
+    done
+}
+
+# ---- Completion (§8) --------------------------------------------------------------------------
+
+# Keeps the I_* items that match <partial>: the prefix matches if there are any, else the subsequence
+# matches ranked by first match, then span, then name.
+sd_select_matches() {
+    local partial=$1 i k c p start name key keys=
+    local -a hit=()
+    shopt -s nocasematch
+    for i in "${!I_NAME[@]}"; do
+        [[ ${I_NAME[i]} == "$partial"* ]] && hit+=("$i")
+    done
+    if [ ${#hit[@]} -eq 0 ]; then
+        for i in "${!I_NAME[@]}"; do
+            name=${I_NAME[i]} p=0 start=-1
+            for ((k = 0; k < ${#partial}; k++)); do
+                c=${partial:k:1}
+                while [ $p -lt ${#name} ] && [[ ${name:p:1} != "$c" ]]; do p=$((p + 1)); done
+                [ $p -ge ${#name} ] && continue 2
+                [ $start -lt 0 ] && start=$p
+                p=$((p + 1))
+            done
+            sd_key "$name"
+            printf -v key '%05d\t%05d\t%s\t%d\n' $start $((p - start)) "$KEY" $i
+            keys=$keys$key
+        done
+    fi
+    shopt -u nocasematch
+    if [ ${#hit[@]} -gt 0 ]; then ORDER=("${hit[@]}"); else sd_order "$keys"; fi
+    sd_reorder
+}
+
+# sd_candidates <word>... <partial>: the I_* items for §8.1: meta-commands for a first word starting
+# with --, else the matches in the namespace the words reach. None once they reach a script or don't resolve.
+sd_candidates() {
+    local partial= i
+    if [ $# -gt 0 ]; then partial=${!#}; set -- "${@:1:$#-1}"; fi
+    I_NAME=() I_TYPE=() I_DESC=()
+    if [ $# -eq 0 ] && [[ $partial == --* ]]; then
+        for i in "${!M_NAME[@]}"; do I_NAME+=("${M_NAME[i]}") I_TYPE+=(meta) I_DESC+=("${M_DESC[i]}"); done
+        sd_sort_items
+    else
+        sd_resolve "$ROOT" "$@"
+        [ "$R_KIND" = namespace ] || return 0
+        sd_items "$R_DIR"
+    fi
+    sd_select_matches "$partial"
+}
+
+# --complete [words...] <partial>
+sd_complete() {
+    local i
+    sd_candidates "$@"
+    for i in "${!I_NAME[@]}"; do printf '%s\t%s\t%s\n' "${I_NAME[i]}" "${I_TYPE[i]}" "${I_DESC[i]}"; done
+}
+
+# ---- Running (§11) ----------------------------------------------------------------------------
+
+# sd_run <name> <file> <dir> [args...]: runs one script; its exit code is the status.
+sd_run() {
+    local name=$1 file=$2 dir=$3 text=
+    shift 3
+    IFS= read -r -d '' text 2>/dev/null < "$file"   # up to the first NUL, which is enough for a text script
+    if [[ $text == *$'\r'* ]]; then
+        sd_warning "$file has CRLF line endings, bash will probably fail on it"
+    fi
+    if [ -x "$file" ]; then
+        SD_ROOT=$ROOT SD_NAME=$name SD_DIR=$dir "$file" "$@"
+    else
+        SD_ROOT=$ROOT SD_NAME=$name SD_DIR=$dir bash "$file" "$@"
+    fi
+}
+
+# ---- Hooks (§9, §10.1) ------------------------------------------------------------------------
+
+HOOKS_HEADER=('# sd hooks: state (on|off), when (before|after), target (script name or glob), hook (in hooks/)'
+              '# state  when    target          hook')
+
+# sd_hooks_conf [file]: hooks.conf (§9.2, or <file>). HC_PATH; HC_LINES, the raw lines, kept as they are;
+# H_LINE (index in HC_LINES), H_STATE, H_WHEN, H_TARGET, H_HOOK for the valid entries (entry n is index n-1).
+# A trailing "# comment" after the columns is allowed. Bad lines are warned about and skipped.
+sd_hooks_conf() {
+    local line err i re='(^|[[:space:]])#.*$'
+    local -a c
+    HC_PATH=${1:-$ROOT/hooks.conf}
+    HC_LINES=() H_LINE=() H_STATE=() H_WHEN=() H_TARGET=() H_HOOK=()
+    if [ -f "$HC_PATH" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do HC_LINES+=("${line%$'\r'}"); done < "$HC_PATH"
+    fi
+    for ((i = 0; i < ${#HC_LINES[@]}; i++)); do
+        line=${HC_LINES[i]}
+        [[ $line =~ $re ]] && line=${line%"${BASH_REMATCH[0]}"}
+        c=()
+        read -ra c <<<"$line"
+        [ ${#c[@]} -eq 0 ] && continue
+        err=
+        if [ ${#c[@]} -ne 4 ]; then err="expected 4 columns (state when target hook), found ${#c[@]}"
+        elif [ "${c[0]}" != on ] && [ "${c[0]}" != off ]; then err="state must be on or off, not '${c[0]}'"
+        elif [ "${c[1]}" != before ] && [ "${c[1]}" != after ]; then err="when must be before or after, not '${c[1]}'"
+        fi
+        if [ -n "$err" ]; then sd_warning "${HC_PATH##*/} line $((i + 1)): $err"; continue; fi
+        H_LINE+=("$i") H_STATE+=("${c[0]}") H_WHEN+=("${c[1]}") H_TARGET+=("${c[2]}") H_HOOK+=("${c[3]}")
+    done
+}
+
+sd_save_hooks() {   # <path> <line>...: LF endings
+    local line path=$1
+    shift
+    { for line in "$@"; do printf '%s\n' "$line"; done; } > "$path"
+}
+
+# sd_glob <pattern> <name>: `*` matches any characters, including `/`; everything else is literal.
+sd_glob() {
+    local pat= i c
+    for ((i = 0; i < ${#1}; i++)); do
+        c=${1:i:1}
+        if [ "$c" = '*' ]; then pat="$pat*"; else pat="$pat\\$c"; fi   # \x is a literal x in a pattern
+    done
+    [[ $2 == $pat ]]
+}
+
+# WORDS = $1 split at "/" ("" is one empty word, which never resolves).
+sd_words() { WORDS=(); IFS=/ read -ra WORDS <<<"$1"; [ ${#WORDS[@]} -gt 0 ] || WORDS=(""); }
+
+# sd_find_hook <hook>: HK_NAME (hooks/<hook>), HK_FILE, HK_DIR; status 1 if there is no such hook script.
+# The resolution is left in R_*.
+sd_find_hook() {
+    [ -d "$ROOT/hooks" ] || return 1
+    sd_words "$1"
+    sd_resolve "$ROOT/hooks" "${WORDS[@]}"
+    case $R_KIND in bundle|loose) HK_NAME=hooks/$R_NAME HK_FILE=$R_FILE HK_DIR=$R_DIR ;; *) return 1 ;; esac
+}
+
+# sd_phase <phase> <target> <exit code or ""> <args>...: runs the hooks of SEL (indices of hooks.conf entries)
+# that belong to this phase in order (§9.3). Status: the exit code of the before hook that failed (the rest
+# is skipped), else 0. A failing after hook only warns.
+sd_phase() {
+    local phase=$1 target=$2 code=$3 i rc
+    shift 3
+    for i in "${SEL[@]}"; do
+        [ "${H_WHEN[i]}" = "$phase" ] || continue
+        if ! sd_find_hook "${H_HOOK[i]}"; then
+            sd_warning "hook '${H_HOOK[i]}' not found (hooks.conf entry $((i + 1)))"
+            continue
+        fi
+        ( export SD_TARGET=$target SD_PHASE=$phase SD_NO_HOOKS=1   # a subshell keeps these off the target
+          [ -n "$code" ] && export SD_EXIT_CODE=$code
+          sd_run "$HK_NAME" "$HK_FILE" "$HK_DIR" "$@" )
+        rc=$?
+        [ $rc -eq 0 ] && continue
+        if [ "$phase" = after ]; then
+            sd_warning "hook '${H_HOOK[i]}' (after $target) failed with exit $rc"
+            continue
+        fi
+        sd_error "hook '${H_HOOK[i]}' (before $target) failed with exit $rc"
+        return $rc
+    done
+    return 0
+}
+
+# §9.3: sd_with_hooks <name> <file> <dir> <args>...: before hooks, the script, after hooks.
+# STATUS is the script's exit code (or the failed hook's).
+sd_with_hooks() {
+    local name=$1 i code
+    SEL=()
+    if [ "${SD_NO_HOOKS:-}" != 1 ]; then
+        sd_hooks_conf
+        for i in "${!H_HOOK[@]}"; do
+            [ "${H_STATE[i]}" = on ] && sd_glob "${H_TARGET[i]}" "$name" && SEL+=("$i")
+        done
+    fi
+    sd_phase before "$name" '' "${@:4}" || { STATUS=$?; return; }
+    sd_run "$@"
+    code=$?
+    sd_phase after "$name" "$code" "${@:4}"
+    STATUS=$code
+}
+
+# §10.3: every entry whose target matches <name>, on or off.
+sd_show_which_hooks() {
+    local i width=0 w h s
+    local -a found=()
+    sd_hooks_conf
+    for i in "${!H_HOOK[@]}"; do
+        sd_glob "${H_TARGET[i]}" "$1" || continue
+        found+=("$i")
+        [ ${#H_HOOK[i]} -gt $width ] && width=${#H_HOOK[i]}
+    done
+    if [ ${#found[@]} -eq 0 ]; then echo 'hooks:       (none)'; return; fi
+    echo 'hooks:'
+    for i in "${found[@]}"; do
+        sd_pad "${H_WHEN[i]}" 6 w; sd_pad "${H_HOOK[i]}" $width h; sd_pad "${H_STATE[i]}," 4 s
+        printf '  %s  %s   (%s %d)' "$w" "$h" "$s" $((i + 1))
+        if sd_find_hook "${H_HOOK[i]}"; then echo; else echo ' missing'; fi
+    done
+}
+
+# §10.1 list: n  state  when  target  hook
+sd_show_hooks() {
+    local i nw=${#H_HOOK[@]} tw=0 s w t miss
+    [ $nw -gt 0 ] || return 0
+    nw=${#nw}
+    for i in "${!H_TARGET[@]}"; do [ ${#H_TARGET[i]} -gt $tw ] && tw=${#H_TARGET[i]}; done
+    for i in "${!H_HOOK[@]}"; do
+        sd_pad "${H_STATE[i]}" 3 s; sd_pad "${H_WHEN[i]}" 6 w; sd_pad "${H_TARGET[i]}" $tw t
+        miss='  (missing)'
+        sd_find_hook "${H_HOOK[i]}" && miss=
+        printf '%*d  %s  %s  %s  %s%s\n' $nw $((i + 1)) "$s" "$w" "$t" "${H_HOOK[i]}" "$miss"
+    done
+}
+
+# NAMES += the names of all scripts under <folder> (sd_entries hides hooks/ at the root).
+sd_script_names() {   # <folder> <prefix>
+    local i
+    local -a name kind folder
+    sd_entries "$1"
+    name=("${E_NAME[@]}") kind=("${E_KIND[@]}") folder=("${E_FOLDER[@]}")   # the recursion reuses E_*
+    for i in "${!name[@]}"; do
+        if [ "${kind[i]}" = namespace ]; then sd_script_names "${folder[i]}" "$2${name[i]}/"
+        else NAMES+=("$2${name[i]}"); fi
+    done
+}
+
+sd_hooks_add() {   # <before|after> <target> <hook>
+    local s n w t bad=0 matched=0
+    local -a lines
+    [ $# -eq 3 ] && { [ "$1" = before ] || [ "$1" = after ]; } || bad=1
+    for s; do [[ $s == *[[:space:]]* || $s == '#'* ]] && bad=1; done
+    if [ $bad = 1 ]; then sd_error 'usage: --hooks add <before|after> <target> <hook>'; return; fi
+    sd_find_hook "$3" || { sd_error "hook '$3' not found in $ROOT/hooks"; return; }
+    NAMES=()
+    sd_script_names "$ROOT" ''
+    for n in "${NAMES[@]}"; do sd_glob "$2" "$n" && { matched=1; break; }; done
+    [ $matched = 1 ] || sd_warning "target '$2' matches no script"
+    if [ -f "$HC_PATH" ]; then lines=("${HC_LINES[@]}"); else lines=("${HOOKS_HEADER[@]}"); fi   # columns as in the header
+    sd_pad "$1" 6 w; sd_pad "$2" 14 t
+    lines+=("on       $w  $t  $3")
+    sd_save_hooks "$HC_PATH" "${lines[@]}"
+    echo "added entry $((${#H_HOOK[@]} + 1))"
+}
+
+# rm / on / off <n>: touches only that line.
+sd_hooks_update() {
+    local action=$1 n=0 l j m1 m2 m3 pad sp re='^([[:space:]]*)(on|off)([[:space:]]+)'
+    local -a out=()
+    shift
+    if [ $# -eq 1 ] && [[ $1 =~ ^[0-9]+$ ]]; then n=$((10#$1)); fi
+    if [ $n -lt 1 ] || [ $n -gt ${#H_HOOK[@]} ]; then
+        sd_error "no hook entry '$*' (see --hooks); usage: --hooks $action <n>"
+        return
+    fi
+    l=${H_LINE[n - 1]}
+    out=("${HC_LINES[@]}")
+    if [ "$action" = rm ]; then
+        out=()
+        for ((j = 0; j < ${#HC_LINES[@]}; j++)); do [ $j -ne $l ] && out+=("${HC_LINES[j]}"); done
+    else   # swap the state word, keeping the later columns where they are if there are spaces to absorb it
+        [[ ${HC_LINES[l]} =~ $re ]]
+        m1=${BASH_REMATCH[1]} m2=${BASH_REMATCH[2]} m3=${BASH_REMATCH[3]}
+        pad=$((${#m2} + ${#m3} - ${#action}))
+        [ $pad -lt 1 ] && pad=1
+        printf -v sp '%*s' $pad ''
+        out[l]=$m1$action$sp${HC_LINES[l]:${#BASH_REMATCH[0]}}
+    fi
+    sd_save_hooks "$HC_PATH" "${out[@]}"
+}
+
+sd_hooks_command() {
+    local cmd=${1:-}
+    [ $# -gt 0 ] && shift
+    sd_hooks_conf
+    case $cmd in
+        '')  sd_show_hooks ;;
+        add) sd_hooks_add "$@" ;;
+        edit)
+            [ -f "$HC_PATH" ] || sd_save_hooks "$HC_PATH" "${HOOKS_HEADER[@]}"
+            sd_editor "$HC_PATH" ;;
+        rm|on|off) sd_hooks_update "$cmd" "$@" ;;
+        *)   sd_error 'usage: --hooks [add <before|after> <target> <hook> | rm <n> | on <n> | off <n> | edit]' ;;
+    esac
+}
+
+# ---- Export / import (§10.4, §10.5) -----------------------------------------------------------
+
+sd_mktemp() {   # WORK = a new temp folder, removed on exit
+    WORK=$(mktemp -d "${TMPDIR:-/tmp}/sd.XXXXXX") || return 1
+    trap 'rm -rf "$WORK"' EXIT
+    trap 'exit 130' INT TERM HUP
+}
+
+# SORTED = the paths in $@ ordered by name, like the listing.
+sd_sorted() {
+    local p i=0 keys=
+    local -a in=("$@")
+    for p; do sd_key "${p##*/}"; keys=$keys$KEY$tab$i$nl; i=$((i + 1)); done
+    sd_order "$keys"
+    SORTED=()
+    for i in "${ORDER[@]}"; do SORTED+=("${in[i]}"); done
+}
+
+# WALK += all files under <folder>, hidden ones too: a folder's files first, then its subfolders (as Get-ChildItem does).
+sd_walk() {
+    local p d
+    local -a files=() dirs=()
+    shopt -s dotglob
+    for p in "$1"/*; do if [ -d "$p" ]; then dirs+=("$p"); elif [ -f "$p" ]; then files+=("$p"); fi; done
+    shopt -u dotglob
+    sd_sorted "${files[@]}"; WALK+=("${SORTED[@]}")
+    sd_sorted "${dirs[@]}"; dirs=("${SORTED[@]}")   # the recursion reuses SORTED
+    for d in "${dirs[@]}"; do sd_walk "$d"; done
+}
+
+# OUT += the root-relative paths of everything the resolved R_* script, bundle or namespace consists of.
+sd_add_files() {
+    local f
+    local -a found=()
+    if [ "$R_KIND" = loose ]; then
+        sd_files "$R_HOME" "$R_LEAF"; found=("${FILES[@]}")
+    else
+        WALK=(); sd_walk "$R_DIR"; found=("${WALK[@]}")
+    fi
+    for f in "${found[@]}"; do
+        f=${f#"$ROOT"/}
+        case $OUT_SEEN in *"$nl$f$nl"*) ;; *) OUT_SEEN=$OUT_SEEN$f$nl; OUT+=("$f") ;; esac
+    done
+}
+
+sd_export() {
+    local out p path i h n
+    local -a hooks=() picked=()
+    if [ $# -lt 2 ] || [[ $1 == --* ]]; then sd_error 'usage: --export <file> <path>...'; return; fi
+    sd_abs "$1"; out=$ABS
+    shift
+    EXTS=("${ALL_EXTS[@]}")   # all files of a script, whatever the platform
+    OUT=() OUT_SEEN=$nl NAMES=()
+    for path; do
+        p=${path#"${path%%[!/]*}"}; p=${p%"${p##*[!/]}"}
+        if [[ $p == hooks/?* ]]; then
+            sd_find_hook "${p#hooks/}" || { sd_error "no hook '$p'"; return; }
+        else
+            sd_words "$p"
+            sd_resolve "$ROOT" "${WORDS[@]}"
+        fi
+        case $R_KIND in notfound|ambiguous) sd_error "$R_ERR"; return ;; esac
+        if [ ${#R_ARGS[@]} -gt 0 ]; then sd_error "no script or folder '$p'"; return; fi
+        sd_add_files
+        if [[ $p == hooks/* ]]; then hooks+=("${p#hooks/}")
+        elif [ "$R_KIND" = namespace ]; then sd_script_names "$R_DIR" "$R_NAME/"
+        else NAMES+=("$R_NAME"); fi
+    done
+    sd_hooks_conf
+    for i in "${!H_HOOK[@]}"; do   # entries whose hook was named, or whose target matches an exported script
+        for h in "${hooks[@]}"; do [ "$h" = "${H_HOOK[i]}" ] && { picked+=("$i"); continue 2; }; done
+        for n in "${NAMES[@]}"; do sd_glob "${H_TARGET[i]}" "$n" && { picked+=("$i"); break; }; done
+    done
+    for i in "${picked[@]}"; do   # the hook scripts the entries use
+        if sd_find_hook "${H_HOOK[i]}"; then sd_add_files
+        else sd_warning "hook '${H_HOOK[i]}' not found (hooks.conf entry $((i + 1))), exporting the entry anyway"; fi
+    done
+
+    sd_mktemp || { sd_error 'cannot create a temporary folder'; return; }
+    { echo '# sd export: hooks.conf entries, added as off on import'
+      for i in "${picked[@]}"; do printf '%s\n' "${HC_LINES[H_LINE[i]]}"; done; } > "$WORK/sd-export.conf"
+    # -h: a symlinked script is stored as a file (import refuses links)
+    tar -czhf "$out" -C "$WORK" sd-export.conf -C "$ROOT" "${OUT[@]}" || { sd_error "tar failed writing $out"; return; }
+    echo "exported to $out"
+    echo 'files:'
+    printf '  %s\n' "${OUT[@]}"
+    if [ ${#picked[@]} -gt 0 ]; then
+        echo 'hook entries:'
+        for i in "${picked[@]}"; do echo "  ${H_STATE[i]}  ${H_WHEN[i]}  ${H_TARGET[i]}  ${H_HOOK[i]}"; done
+    fi
+}
+
+# §10.5 step 1: every name relative and inside the root, every entry a plain file or folder.
+# PROBLEM = what is wrong, status 1 if anything.
+sd_test_archive() {
+    local names line has_conf=0 has_hooks=0
+    names=$(tar -tzf "$1" 2>&1) || { PROBLEM="cannot read $1 as a tar.gz archive: $names"; return 1; }
+    while IFS= read -r line; do
+        case $line in /*|*\\*|*:*) PROBLEM="unsafe path in archive: $line"; return 1 ;; esac
+        if [[ /$line/ == */../* ]]; then PROBLEM="unsafe path in archive: $line"; return 1; fi
+        [ "${line#./}" = sd-export.conf ] && has_conf=1
+        [ "${line#./}" = hooks.conf ] && has_hooks=1
+    done <<<"$names"
+    while IFS= read -r line; do   # symlinks, hard links, devices, ...
+        case $line in -*|d*|'') ;; *) PROBLEM="unsafe entry in archive (not a plain file or folder): $line"; return 1 ;; esac
+    done <<<"$(tar -tvzf "$1" 2>&1)"
+    if [ $has_conf = 0 ]; then PROBLEM="$1 is not an sd export (no sd-export.conf)"; return 1; fi
+    # Entries only arrive through sd-export.conf, added as off; a hooks.conf would replace the user's own.
+    if [ $has_hooks = 1 ]; then PROBLEM="$1 contains a hooks.conf, which is never imported"; return 1; fi
+}
+
+sd_import() {
+    local a force=0 file f rel key i skipped=0 w t known
+    local -a given=() rels=() exists=() lines=() X_WHEN X_TARGET X_HOOK A_N A_WHEN A_TARGET A_HOOK
+    for a; do if [ "$a" = --force ]; then force=1; else given+=("$a"); fi; done
+    if [ ${#given[@]} -ne 1 ] || [[ ${given[0]} == --* ]]; then sd_error 'usage: --import <file> [--force]'; return; fi
+    sd_abs "${given[0]}"; file=$ABS
+    [ -f "$file" ] || { sd_error "no such file: $file"; return; }
+    sd_test_archive "$file" || { sd_error "$PROBLEM"; return; }
+
+    sd_mktemp || { sd_error 'cannot create a temporary folder'; return; }
+    tar -xzf "$file" -C "$WORK" || { sd_error "tar failed extracting $file"; return; }
+    WALK=(); sd_walk "$WORK"
+    for f in "${WALK[@]}"; do
+        rel=${f#"$WORK"/}
+        [ "$rel" = sd-export.conf ] || rels+=("$rel")
+    done
+    for rel in "${rels[@]}"; do [ -e "$ROOT/$rel" ] && exists+=("$rel"); done
+    if [ ${#exists[@]} -gt 0 ] && [ $force = 0 ]; then
+        for rel in "${exists[@]}"; do echo "  exists: $rel" >&2; done
+        sd_error 'nothing imported, these files already exist (use --force to overwrite)'
+        return
+    fi
+    for rel in "${rels[@]}"; do
+        case $rel in */*) mkdir -p "$ROOT/${rel%/*}" ;; esac
+        cp -f "$WORK/$rel" "$ROOT/$rel"
+    done
+    sd_hooks_conf "$WORK/sd-export.conf"
+    X_WHEN=("${H_WHEN[@]}") X_TARGET=("${H_TARGET[@]}") X_HOOK=("${H_HOOK[@]}")
+
+    sd_hooks_conf
+    known=$nl
+    for i in "${!H_HOOK[@]}"; do known="$known${H_WHEN[i]} ${H_TARGET[i]} ${H_HOOK[i]}$nl"; done
+    if [ -f "$HC_PATH" ]; then lines=("${HC_LINES[@]}"); else lines=("${HOOKS_HEADER[@]}"); fi
+    A_N=() A_WHEN=() A_TARGET=() A_HOOK=()
+    for i in "${!X_HOOK[@]}"; do
+        key="${X_WHEN[i]} ${X_TARGET[i]} ${X_HOOK[i]}"
+        case $known in *"$nl$key$nl"*) skipped=$((skipped + 1)); continue ;; esac
+        known=$known$key$nl
+        sd_pad "${X_WHEN[i]}" 6 w; sd_pad "${X_TARGET[i]}" 14 t
+        lines+=("off      $w  $t  ${X_HOOK[i]}")
+        A_N+=($((${#H_HOOK[@]} + ${#A_N[@]} + 1))) A_WHEN+=("${X_WHEN[i]}") A_TARGET+=("${X_TARGET[i]}") A_HOOK+=("${X_HOOK[i]}")
+    done
+    [ ${#A_N[@]} -gt 0 ] && sd_save_hooks "$HC_PATH" "${lines[@]}"
+    echo "imported ${#rels[@]} file(s):"
+    printf '  %s\n' "${rels[@]}"
+    if [ ${#A_N[@]} -gt 0 ]; then
+        echo 'hook entries added (all off):'
+        for i in "${!A_N[@]}"; do echo "  ${A_N[i]}  ${A_WHEN[i]}  ${A_TARGET[i]}  ${A_HOOK[i]}"; done
+        echo 'switch them on with:'
+        for i in "${!A_N[@]}"; do echo "  $CMD --hooks on ${A_N[i]}"; done
+    fi
+    if [ $skipped -gt 0 ]; then
+        if [ $skipped = 1 ]; then w=y; else w=ies; fi
+        echo "skipped $skipped hook entr$w already in hooks.conf"
+    fi
+}
+
+# ---- Meta-commands (§10) ----------------------------------------------------------------------
+
+sd_help() {
+    local i n u
+    echo "$CMD - run scripts from a folder tree"
+    echo
+    echo 'usage:'
+    echo "  $CMD                        list the sd root"
+    echo "  $CMD <word>... [args...]    run a script, or list a namespace"
+    echo
+    echo 'meta-commands:'
+    for i in "${!M_NAME[@]}"; do
+        sd_pad "${M_NAME[i]}" 9 n; sd_pad "${M_USAGE[i]}" 34 u
+        echo "  $n$u ${M_DESC[i]}"
+    done
+}
+
+sd_which() {
+    local runner
+    case $R_KIND in
+        notfound|ambiguous) sd_resolve_error; return ;;
+        namespace) echo "namespace: ${R_NAME:-(root)}"; sd_items "$R_DIR"; sd_format_items; return ;;
+    esac
+    if [ -x "$R_FILE" ]; then runner=direct; else runner=bash; fi
+    sd_describe "$R_KIND" "$R_HOME" "$R_LEAF" "$R_FOLDER"
+    echo "name:        $R_NAME"
+    echo "kind:        $([ "$R_KIND" = bundle ] && echo bundle || echo script)"
+    echo "file:        $R_FILE"
+    echo "runs with:   $runner"
+    echo "description: $DESC"
+    echo "args:        ${R_ARGS[*]}"
+    sd_show_which_hooks "$R_NAME"
+}
+
+# sd_template <ext> <name> <has .sh>: TEMPLATE = templates/script<ext> for a script called <name>. The .bat
+# hands off to the .sh unless there is no .sh, then it just echoes. LF for .sh, CRLF for .bat.
+sd_template() {
+    local text line
+    [ -f "$REPO/templates/script$1" ] || return 1
+    IFS= read -r -d '' text < "$REPO/templates/script$1"   # status 1 is just "no NUL before EOF"
+    text=${text//$'\r'/}
+    text=${text//<name>/$2}
+    if [ "$1" = .bat ]; then
+        if [ "$3" != 1 ]; then
+            TEMPLATE=
+            while IFS= read -r line; do
+                [[ $line == 'bash '* ]] && line='echo args: %*'
+                TEMPLATE=$TEMPLATE$line$nl
+            done <<<"${text%$nl}"
+            text=$TEMPLATE
+        fi
+        text=${text//$nl/$'\r\n'}
+    fi
+    TEMPLATE=$text
+}
+
+# Opens the files in $VISUAL, else $EDITOR; with neither, prints the paths.
+sd_editor() {
+    local editor=${VISUAL:-${EDITOR:-}}
+    if [ -n "$editor" ]; then
+        sh -c "$editor \"\$@\"" sh "$@"   # run as a command line, so that values like `code --wait` work
+    else
+        printf '%s\n' "$@"
+    fi
+}
+
+sd_new() {
+    local a rel seg loc base target f parent bad=0 sh=0 bat=0 bundle=0
+    local -a flags=() paths=() segs=() new=() clashes=()
+    for a; do case $a in --*) flags+=("$a") ;; *) paths+=("$a") ;; esac; done
+    rel=
+    if [ ${#paths[@]} -eq 1 ]; then
+        rel=${paths[0]//\\//}
+        rel=${rel#"${rel%%[!/]*}"}; rel=${rel%"${rel##*[!/]}"}
+    fi
+    [ -n "$rel" ] || bad=1
+    IFS=/ read -ra segs <<<"$rel"
+    for seg in "${segs[@]}"; do [[ -z $seg || $seg == [-.]* || $seg == *[[:space:]]* ]] && bad=1; done
+    for a in "${flags[@]}"; do
+        case $a in --bundle) bundle=1 ;; --sh) sh=1 ;; --bat) bat=1 ;; *) bad=1 ;; esac
+    done
+    if [ $bad = 1 ]; then
+        sd_error 'usage: --new <path> [--bundle] [--bat | --sh]  (names: no spaces, not starting with - or .)'
+        return
+    fi
+    [ $sh = 0 ] && [ $bat = 0 ] && sh=1   # on Unix a plain --new makes only the .sh
+
+    loc=$ROOT/$rel base=${loc##*/} target=$loc
+    [ $bundle = 1 ] && target=$loc/$base
+    [ $sh = 1 ] && new+=("$target.sh")
+    [ $bat = 1 ] && new+=("$target.bat")
+
+    # Existing target files, or an entry that would make the name ambiguous (§5.4).
+    EXTS=("${ALL_EXTS[@]}")
+    for f in "${new[@]}"; do [ -e "$f" ] && clashes+=("$f"); done
+    if [ $bundle = 1 ]; then
+        parent=${loc%/*}
+        if [ -d "$parent" ]; then sd_files "$parent" "$base"; clashes+=("${FILES[@]}"); fi
+        # An existing bundle may gain files; any other folder is a namespace and must not become one.
+        if [ -d "$loc" ]; then sd_files "$loc" "$base"; [ ${#FILES[@]} -eq 0 ] && clashes+=("$loc"); fi
+    elif [ -d "$loc" ]; then
+        clashes+=("$loc")
+    fi
+    if [ ${#clashes[@]} -gt 0 ]; then
+        for f in "${clashes[@]}"; do sd_error "cannot create '$rel': $f already exists"; done
+        return
+    fi
+
+    mkdir -p "${target%/*}"
+    sd_repo
+    for f in "${new[@]}"; do
+        sd_template ".${f##*.}" "${target##*/}" $sh || { sd_error "no template for ${f##*.} in $REPO/templates"; return; }
+        printf '%s' "$TEMPLATE" > "$f"
+        [ "${f##*.}" = sh ] && chmod +x "$f"
+    done
+    sd_editor "${new[@]}"
+}
+
+sd_meta() {
+    local cmd=$1
+    shift
+    case $cmd in
+        --help)     sd_help ;;
+        --complete) sd_complete "$@" ;;
+        --new)      sd_new "$@" ;;
+        --which)    sd_resolve "$ROOT" "$@"; sd_which ;;
+        --hooks)    sd_hooks_command "$@" ;;
+        --export)   sd_export "$@" ;;
+        --import)   sd_import "$@" ;;
+        *)          sd_error "unknown meta-command '$cmd'"; sd_help ;;
+    esac
+}
+
+# ---- Entry point ------------------------------------------------------------------------------
+
+sd_main() {
+    sd_config
+    [ -d "$ROOT" ] || { sd_error "sd root '$ROOT' does not exist"; return; }
+    if [[ ${1:-} == --* ]]; then sd_meta "$@"; return; fi
+    sd_resolve "$ROOT" "$@"
+    case $R_KIND in
+        namespace)          sd_items "$R_DIR"; sd_format_items ;;
+        notfound|ambiguous) sd_resolve_error ;;
+        *)                  sd_with_hooks "$R_NAME" "$R_FILE" "$R_DIR" "${R_ARGS[@]}" ;;
+    esac
+}
+
+sd_main "$@"
+exit $STATUS
