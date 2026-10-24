@@ -40,8 +40,8 @@ ALL_EXTS=(.bat .cmd .sh "")               # --new and --export look at every pla
 
 # Meta-commands: name, usage, description. (--complete is hidden.)
 M_NAME=(--help --hooks --new --which --export --import)
-M_USAGE=('' '[add|rm|on|off|edit ...]' '<path> [--bundle] [--bat | --sh]' '<word>... [args...]' '<file> <path>...' '<file> [--force]')
-M_DESC=('Show this help' 'Manage hooks' 'Create a script' 'Show what would run' 'Export scripts and hooks' 'Import an export file')
+M_USAGE=('' '[add|rm|on|off|edit ...]' '<path> [--bundle] [--bat | --sh]' '<word>... [args...]' '<file> <path>... [--hooks]' '<file> [--force]')
+M_DESC=('Show this help' 'Manage hooks' 'Create a script' 'Show what would run' 'Export scripts (and hooks)' 'Import an export file')
 
 # ---- Output, config, small helpers ------------------------------------------------------------
 
@@ -637,9 +637,14 @@ sd_add_files() {
 }
 
 sd_export() {
-    local out p path i h n
-    local -a hooks=() picked=()
-    if [ $# -lt 2 ] || [[ $1 == --* ]]; then sd_error 'usage: --export <file> <path>...'; return; fi
+    local out p path i h n a withhooks=0 bad=0
+    local -a hooks=() picked=() args=()
+    for a; do
+        case $a in --hooks) withhooks=1 ;; --*) bad=1 ;; *) args+=("$a") ;; esac
+    done
+    [ ${#args[@]} -ge 2 ] || bad=1
+    if [ $bad = 1 ]; then sd_error 'usage: --export <file> <path>... [--hooks]'; return; fi
+    set -- "${args[@]}"
     sd_abs "$1"; out=$ABS
     shift
     EXTS=("${ALL_EXTS[@]}")   # all files of a script, whatever the platform
@@ -660,8 +665,10 @@ sd_export() {
         else NAMES+=("$R_NAME"); fi
     done
     sd_hooks_conf
-    for i in "${!H_HOOK[@]}"; do   # entries whose hook was named, or whose target matches an exported script
+    # entries whose hook was named, and with --hooks those whose target matches an exported script
+    for i in "${!H_HOOK[@]}"; do
         for h in "${hooks[@]}"; do [ "$h" = "${H_HOOK[i]}" ] && { picked+=("$i"); continue 2; }; done
+        [ $withhooks = 1 ] || continue
         for n in "${NAMES[@]}"; do sd_glob "${H_TARGET[i]}" "$n" && { picked+=("$i"); break; }; done
     done
     for i in "${picked[@]}"; do   # the hook scripts the entries use

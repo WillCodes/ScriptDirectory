@@ -10,7 +10,7 @@ $script:Meta = @(
     @('--hooks',  '[add|rm|on|off|edit ...]',          'Manage hooks'),
     @('--new',    '<path> [--bundle] [--bat | --sh]',  'Create a script'),
     @('--which',  '<word>... [args...]',               'Show what would run'),
-    @('--export', '<file> <path>...',                  'Export scripts and hooks'),
+    @('--export', '<file> <path>... [--hooks]',        'Export scripts (and hooks)'),
     @('--import', '<file> [--force]',                  'Import an export file')
 )
 
@@ -418,7 +418,11 @@ function Get-SdFilePaths($R) {
 }
 
 function Export-SdFiles([string[]]$Rest) {
-    if ($Rest.Count -lt 2 -or $Rest[0].StartsWith('--')) { return Write-SdError 'usage: --export <file> <path>...' }
+    $withHooks = $Rest -contains '--hooks'
+    $Rest = @($Rest | Where-Object { $_ -ne '--hooks' })
+    if ($Rest.Count -lt 2 -or ($Rest | Where-Object { $_.StartsWith('--') })) {
+        return Write-SdError 'usage: --export <file> <path>... [--hooks]'
+    }
     $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Rest[0])
     $files = [Collections.Generic.List[string]]::new()
     $names = [Collections.Generic.List[string]]::new()   # script names that the hook entries' targets are matched against
@@ -435,9 +439,9 @@ function Export-SdFiles([string[]]$Rest) {
         else { $names.Add($r.Name) }
     }
     $conf = Get-SdHooksConf
-    $picked = @($conf.Entries | Where-Object {
+    $picked = @($conf.Entries | Where-Object {   # entries whose hook was named, and with --hooks those whose target matches
         $e = $_
-        $e.Hook -in $hooks -or ($names | Where-Object { Test-SdGlob $e.Target $_ })
+        $e.Hook -in $hooks -or ($withHooks -and ($names | Where-Object { Test-SdGlob $e.Target $_ }))
     })
     foreach ($e in $picked) {   # the hook scripts the entries use
         $hook = Find-SdHook $e.Hook

@@ -291,7 +291,7 @@ Hook environment, on top of §11:
 | `--hooks ...` | Manage hooks (§10.1). |
 | `--new <path> [--bundle] [--bat \| --sh]` | Create a script (§10.2). |
 | `--which <word>... [args...]` | Show what would run (§10.3). |
-| `--export <file> <path>...` | Export scripts and hooks (§10.4). |
+| `--export <file> <path>... [--hooks]` | Export scripts, and optionally their hooks (§10.4). |
 | `--import <file> [--force]` | Import an export file (§10.5). |
 | `--complete ...` | Completion protocol (§8.1). Hidden from `--help`. |
 
@@ -377,12 +377,13 @@ For a namespace it prints the namespace path and its listing. Exit 0 if resolved
 ### 10.4 `--export`
 
 ```
-sd --export team.tar.gz dev/build dev/deploy tools hooks/lint
+sd --export team.tar.gz dev/build dev/deploy tools hooks/lint [--hooks]
 ```
 
 - `<path>`: a script name, a namespace (exported whole) or a hook (`hooks/<name>`), all relative to the root.
 - All files for the given scripts are included, whatever the platform: `.bat`, `.sh` and whole bundle folders.
-- A `hooks.conf` entry is included if its target matches an exported script, or its hook was named explicitly. Hook scripts used by included entries are added automatically.
+- A `hooks.conf` entry is included if its hook was named explicitly, or, with `--hooks`, if its target matches an exported script. Without `--hooks` and named hooks, no entries or hook scripts are exported. Hook scripts used by included entries are added automatically.
+- `--hooks` may appear anywhere after `--export`; any other `--` argument is a usage error.
 - Archive layout: files at their root-relative paths, plus `sd-export.conf` at the archive root. It holds the included `hooks.conf` lines in `hooks.conf` format, with their state kept as it was.
 - The summary on stdout lists the files and hook entries exported.
 

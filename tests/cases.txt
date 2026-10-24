@@ -122,7 +122,16 @@ all  | 1 | --hooks rm 99         |
 # --- Export / import round trip (SPEC 10.4, 10.5) ---------------------------------------------------
 # State: hooks.conf has entry 6 (after dev/deploy pass), switched on. out.tar.gz is written in the
 # runner's working directory.
-all  | 0 | --export out.tar.gz dev/deploy | deploy.sh
+# by default no hooks go along: no entries, no hook scripts
+all  | 0 | --export plain.tar.gz dev/deploy | deploy.sh
+all  | 0 | --export plain.tar.gz dev/deploy | !hook entries
+all  | 0 | --export plain.tar.gz dev/deploy | !hooks/pass
+all  | 1 | --export plain.tar.gz dev/deploy --bogus | [--hooks]
+# a hook named on its own goes along with its entries, --hooks or not
+all  | 0 | --export named.tar.gz hooks/pass | hook entries:
+# --hooks: the entries whose target matches, and the hook scripts they use
+all  | 0 | --export out.tar.gz dev/deploy --hooks | hooks/pass
+all  | 0 | --export out.tar.gz dev/deploy --hooks | deploy.sh
 all  | 0 | --hooks rm 6           |
 all  | 0 | --hooks               | !dev/deploy
 # deploy.sh and the hook scripts already exist: refuse without --force

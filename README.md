@@ -177,7 +177,7 @@ $ sd --hooks off 3                         # also: on <n>, rm <n>, edit
 | `sd --new <path> [--bundle] [--bat \| --sh]` | create a script from a template (below) |
 | `sd --which <word>... [args...]` | show what would run, without running it |
 | `sd --hooks [add\|rm\|on\|off\|edit ...]` | list and manage hooks |
-| `sd --export <file> <path>...` | export scripts and hooks |
+| `sd --export <file> <path>... [--hooks]` | export scripts, and with `--hooks` their hooks |
 | `sd --import <file> [--force]` | import an export file |
 | `sd --complete ...` | completion protocol (hidden from `--help`) |
 
@@ -205,10 +205,10 @@ Unknown meta-command: error plus the help text, exit 1. Errors go to stderr and 
 ## Export and import
 
 ```
-$ sd --export team.tar.gz hooked tools hooks/lint
+$ sd --export team.tar.gz hooked tools hooks/lint --hooks
 ```
 
-Each `<path>` is a script, a namespace (taken whole) or `hooks/<name>`. All platforms' files for a script come along (`.bat`, `.sh`, whole bundles). The `hooks.conf` entries whose target matches an exported script, or whose hook you named, are included, and so are the hook scripts they use. The archive is a `.tar.gz` with files at their root-relative paths plus `sd-export.conf` holding the entries.
+Each `<path>` is a script, a namespace (taken whole) or `hooks/<name>`. All platforms' files for a script come along (`.bat`, `.sh`, whole bundles). **Hooks are left out unless you pass `--hooks`**, which adds the `hooks.conf` entries whose target matches an exported script, and the hook scripts they use. A hook you name (`hooks/lint`) always comes along, with its entries. The archive is a `.tar.gz` with files at their root-relative paths plus `sd-export.conf` holding the entries.
 
 ```
 $ sd --import team.tar.gz
