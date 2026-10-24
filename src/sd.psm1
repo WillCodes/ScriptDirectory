@@ -639,7 +639,7 @@ function Invoke-Sd {
 $script:CmdName = (Get-SdConfig).Name
 Set-Item "Function:\global:$script:CmdName" { Invoke-Sd @args }
 
-# Menu entries show the §7 listing line; only the name is inserted. Never writes errors into the prompt.
+# Menu entries show the §7 listing line; only the name (and a space) is inserted. Never writes errors into the prompt.
 Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
     param($word, $ast, $cursor)
     try {
@@ -652,9 +652,11 @@ Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
         # MenuComplete fits as many columns as the widest entry allows; past half the window, that's one per line.
         $half = try { [int]([Console]::BufferWidth / 2) } catch { 0 }
         $lines = @($lines | ForEach-Object { $_.PadRight($half) })
+        # "name " so that Tab can go straight on to the next word. Always ParameterValue: PSReadLine appends
+        # a path separator to a ProviderContainer, which would make a namespace "dev\".
         for ($i = 0; $i -lt $items.Count; $i++) {
-            $type = $items[$i].Type -eq 'dir' ? 'ProviderContainer' : 'ParameterValue'
-            [Management.Automation.CompletionResult]::new($items[$i].Name, $lines[$i], $type, ($items[$i].Desc ? $items[$i].Desc : $items[$i].Name))
+            [Management.Automation.CompletionResult]::new("$($items[$i].Name) ", $lines[$i], 'ParameterValue',
+                ($items[$i].Desc ? $items[$i].Desc : $items[$i].Name))
         }
     } catch { }
 }

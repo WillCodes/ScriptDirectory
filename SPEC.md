@@ -199,8 +199,10 @@ An empty `<partial>` matches everything. Order otherwise follows §7.
 ### 8.3 PowerShell
 
 - `Register-ArgumentCompleter -Native -CommandName <name>`.
-- Each `CompletionResult` has `CompletionText` = the name, and `ListItemText` = the line from §7 (e.g. `build    ▸ Build the project`).
-  So the menu shows every description, and only the name is inserted.
+- Each `CompletionResult` has `CompletionText` = the name followed by a space, `ListItemText` = the line from §7 (e.g. `build  ▸ Build the project`),
+  and type `ParameterValue` (a `ProviderContainer` would make PSReadLine append a path separator).
+  So the menu shows every description, and only the name is inserted, ready for the next Tab: `sd de` → `sd dev ` → `sd dev sub `.
+- The menu lines are padded to half the window width, so the menu shows one entry per line.
 - Setup binds Tab to a handler that calls PSReadLine `MenuComplete` when the line starts with `<name> `, and `TabCompleteNext` (the default) otherwise.
 
 ### 8.4 bash
