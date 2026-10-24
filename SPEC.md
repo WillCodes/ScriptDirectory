@@ -215,6 +215,10 @@ An empty `<partial>` matches everything. Order otherwise follows §7.
 - Display lines are padded to half the screen width (one per row) and keep §7's order (`compopt -o nosort`, bash 4.4+).
 - The completion file turns on readline's `show-all-if-ambiguous` in interactive shells, so the list shows on the first Tab.
   It is a readline setting, so it applies to every command.
+- Pressing Tab again on the same unchanged line (at the same prompt) prints nothing, instead of the list again.
+- Chaining (bash 4+, only if Tab still has its default `complete` binding): Tab is rebound to `complete` followed by
+  `possible-completions` when sd has just filled in a namespace, so its contents are listed straight away.
+  For anything else the extra step does nothing. The helper keys are under `\C-x%`.
 - Several candidates: `COMPREPLY` gets the display lines from §7 (shown, not inserted).
 - Exactly one candidate and a non-empty partial: `COMPREPLY` gets just the name, so it is inserted.
   With an empty partial (a folder's contents) a single candidate is shown like several, as in §8.3.
