@@ -682,8 +682,8 @@ function Test-SdNextMenu([string]$Line) {
     $r.Kind -eq 'namespace' -and @(Get-SdItems $r.Dir).Count -gt 0
 }
 
-# Tab opens the menu after "<name> " when the cursor follows a space, and does whatever it did before everywhere
-# else. Picking a namespace opens its menu straight away. (No GetNewClosure: the handler must run in this module, to see its functions.)
+# Tab opens the menu after "<name> ", and does whatever it did before everywhere else. Picking a namespace
+# opens its menu straight away. (No GetNewClosure: the handler must run in this module, to see its functions.)
 if (Get-Module PSReadLine) {
     $script:PrevTab = (Get-PSReadLineKeyHandler -Chord Tab).Function
     if (-not [Microsoft.PowerShell.PSConsoleReadLine].GetMethod("$script:PrevTab")) { $script:PrevTab = 'TabCompleteNext' }
@@ -693,7 +693,6 @@ if (Get-Module PSReadLine) {
         if ($line -notmatch "^\s*$([regex]::Escape($script:CmdName))\s") {
             return [Microsoft.PowerShell.PSConsoleReadLine]::$($script:PrevTab)()
         }
-        if (-not [char]::IsWhiteSpace($line[$cursor - 1])) { return }   # only after a space, never mid-word
         # MenuComplete returns once a pick is made (or Esc reverts it); go on while the pick leads to another menu.
         for ($i = 0; $i -lt 50; $i++) {
             $before = $line

@@ -14,14 +14,12 @@ if [ -r "$_sd_config" ]; then
 fi
 
 _sd_complete() {
-    local cur=${COMP_WORDS[COMP_CWORD]} out n t d l i width=0 mark half pad
+    local cur=${COMP_WORDS[COMP_CWORD]} out n t d l i p width=0 mark half pad
     local names=() lines=() types=() descs=() key="$HISTCMD $COMP_POINT $COMP_LINE"
     COMPREPLY=()
-    # Only after a space, to see what comes next: Tab in the middle of a word does nothing.
-    [ -z "$cur" ] || return 0
     # Readline prints the list again on every Tab. Once it's shown for this line (at this prompt: HISTCMD), stay quiet.
-    [ "$key" = "${_SD_LISTED:-}" ] && return 0
-    out=$("$_SD_BIN" --complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "" 2>/dev/null) || return 0
+    [ -z "$cur" ] && [ "$key" = "${_SD_LISTED:-}" ] && return 0
+    out=$("$_SD_BIN" --complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" 2>/dev/null) || return 0
     out=${out//$'\r'/}   # in case a CRLF .help or script line slips through
     while IFS=$'\t' read -r n t d; do
         [ -n "$n" ] || continue
@@ -31,6 +29,16 @@ _sd_complete() {
         lines[${#lines[@]}]=$n
     done <<< "$out"
     [ ${#names[@]} -gt 0 ] || return 0
+    # In the middle of a word, Tab only completes it, never lists: one match is filled in (with a space); several
+    # fill in what they share, without a space (compopt, bash 4+), or nothing if that adds nothing.
+    if [ -n "$cur" ]; then
+        if [ ${#names[@]} -eq 1 ]; then COMPREPLY=("${names[0]}"); return 0; fi
+        p=${names[0]}
+        for n in "${names[@]}"; do while [[ $n != "$p"* ]]; do p=${p%?}; done; done
+        [ ${#p} -gt ${#cur} ] && compopt -o nospace 2>/dev/null && COMPREPLY=("$p")
+        return 0
+    fi
+    # After a space, Tab lists what comes next.
     _SD_LISTED=$key
     # Keep sd's order (namespaces first) instead of readline's alphabetical one: bash 4.4+.
     if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 4 ]; }; then
