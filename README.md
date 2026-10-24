@@ -48,7 +48,7 @@ A script is found by walking the words left to right, one folder per word. Every
 ```
 ~/sd/
   hooks/             hook scripts (hidden, see Hooks)
-  hooks.conf         hook configuration
+    hooks.conf         hook configuration
   hello.sh           loose script:  sd hello
   deploy.sh          loose script:  sd deploy
   deploy.bat           the Windows version of the same script
@@ -65,7 +65,7 @@ A script is found by walking the words left to right, one folder per word. Every
 - **Loose script:** `name.bat`, `name.cmd`, `name.sh` or an extensionless `name`.
 - **Bundle:** a folder holding a script of the same name (`dev/build/build.sh`). It acts as one script, can't have subcommands (`sd dev build release` passes `release` to it), and its other files are private.
 - **Priority:** Windows picks `.bat`, then `.cmd`, then `.sh`, then extensionless. Unix picks `.sh`, then extensionless. A name with no file for the current platform doesn't exist there: it is not run, listed or completed.
-- **Ignored:** anything starting with `.`, and every `.ps1` file (never run). At the root, also `hooks/` and `hooks.conf`.
+- **Ignored:** anything starting with `.`, and every `.ps1` file (never run). At the root, also `hooks/`.
 - **Conflicts:** a folder and a loose script with the same name (`clash/` and `clash.sh`) is an error when you use it, and shows as `!  ambiguous` in listings.
 - **Names:** no spaces, and must not start with `-` (a first word starting with `--` is a meta-command).
 - Matching is case-sensitive on Unix, case-insensitive on Windows. Only completion is fuzzy.
@@ -119,24 +119,24 @@ build	script	Build the project
 
 ## Hooks
 
-Hooks are scripts in `<root>/hooks/` that run before or after other scripts. They're attached in `<root>/hooks.conf`, which lives in the root so it travels with your scripts (for example in git):
+Hooks are scripts in `<root>/hooks/` that run before or after other scripts. They're attached in `<root>/hooks/hooks.conf`, which lives with them so it travels with your scripts (for example in git). Setup creates both.
 
 ```
 # state  when    target          hook
-on       before  hooked/*        pass
-on       after   hooked/*        after
-on       before  hooked/blocked  fail
-off      before  *               fail
-on       before  hooked/ok       missing
+ON       BEFORE  hooked/*        pass
+ON       AFTER   hooked/*        after
+ON       BEFORE  hooked/blocked  fail
+OFF      BEFORE  *               fail
+ON       BEFORE  hooked/ok       missing
 ```
 
-Columns are whitespace-separated; `#` starts a comment. `state` is `on`/`off`, `when` is `before`/`after`, `target` is a script name or a glob (`*` matches any characters including `/`, so `dev/*` matches `dev/x/y`), and `hook` is a name under `hooks/` (nested like `git/fetch` is fine). Entries are numbered from 1 in file order. A malformed line is reported with its line number and skipped.
+Columns are whitespace-separated; `#` starts a comment. `state` is `ON`/`OFF`, `when` is `BEFORE`/`AFTER` (lower case is read too), `target` is a script name or a glob (`*` matches any characters including `/`, so `dev/*` matches `dev/x/y`), and `hook` is a name under `hooks/` (nested like `git/fetch` is fine). Entries are numbered from 1 in file order. A malformed line is reported with its line number and skipped.
 
 When `sd hooked ok a b` runs:
 
-1. The matching `on` + `before` hooks run in file order with the same arguments. If one exits non-zero, `sd` prints `hook 'fail' (before hooked/blocked) failed with exit 7`, skips everything else and exits with that code.
+1. The matching `ON` + `BEFORE` hooks run in file order with the same arguments. If one exits non-zero, `sd` prints `hook 'fail' (before hooked/blocked) failed with exit 7`, skips everything else and exits with that code.
 2. The script runs.
-3. The matching `on` + `after` hooks run, whether the script succeeded or not. A failing one only warns.
+3. The matching `ON` + `AFTER` hooks run, whether the script succeeded or not. A failing one only warns.
 4. `sd` exits with the script's exit code.
 
 ```
@@ -162,10 +162,10 @@ Manage the file from the command line (other lines and comments are left alone) 
 
 ```
 $ sd --hooks
-1  on   before  hooked/*        pass
+1  ON   BEFORE  hooked/*        pass
 ...
-5  on   before  hooked/ok       missing  (missing)
-$ sd --hooks add before dev/build lint     # fails if hooks/lint doesn't exist
+5  ON   BEFORE  hooked/ok       missing  (missing)
+$ sd --hooks add BEFORE dev/build lint     # runs hooks/lint before `sd dev build`
 $ sd --hooks off 3                         # also: on <n>, rm <n>, edit
 ```
 
@@ -194,10 +194,10 @@ runs with:   bash (C:\Program Files\Git\bin\bash.exe)
 description: Hooked ok
 args:        x
 hooks:
-  before  pass      (on,  1)
-  after   after     (on,  2)
-  before  fail      (off, 4)
-  before  missing   (on,  5) missing
+  BEFORE  pass      (ON,  1)
+  AFTER   after     (ON,  2)
+  BEFORE  fail      (OFF, 4)
+  BEFORE  missing   (ON,  5) missing
 ```
 
 Unknown meta-command: error plus the help text, exit 1. Errors go to stderr and start with the command name.
@@ -215,16 +215,16 @@ $ sd --import team.tar.gz
 imported 6 file(s):
   hooked/blocked.sh
   ...
-hook entries added (all off):
-  1  before  hooked/*  pass
+hook entries added (all OFF):
+  1  BEFORE  hooked/*  pass
   ...
 switch them on with:
   sd --hooks on 1
   ...
 ```
 
-- **Imported hook entries arrive `off`.** Nothing runs until you read the scripts and turn the entries on. An entry already in `hooks.conf` (same when + target + hook) is skipped.
-- **Safety checks**, before anything is unpacked into the root: the archive is rejected if any entry has an absolute path, `..`, or is a link or device; if it has no `sd-export.conf`; or if it contains a `hooks.conf` (which would replace yours).
+- **Imported hook entries arrive `OFF`.** Nothing runs until you read the scripts and turn the entries on. An entry already in `hooks.conf` (same when + target + hook) is skipped.
+- **Safety checks**, before anything is unpacked into the root: the archive is rejected if any entry has an absolute path, `..`, or is a link or device; if it has no `sd-export.conf`; or if it contains a `hooks/hooks.conf` (which would replace yours).
 - **Existing files** are never overwritten silently: the import lists them and changes nothing, unless you pass `--force`.
 
 ## Configuration
@@ -276,6 +276,15 @@ pwsh ./uninstall.ps1        # Windows
 ```
 
 Removes the entry points, the `PATH` entry, the profile block and the machine config. It **never touches your sd root**. Restart your shell.
+
+## Reload
+
+```
+pwsh ./reload.ps1           # Windows
+./reload.sh                 # Unix
+```
+
+Uninstalls and sets up again in one go, for example after pulling changes. It keeps your root and command name from the machine config, so it asks nothing; `-Root`/`-Name` (`--root`/`--name`) change them. Like uninstall, it never touches your sd root. Restart your shell.
 
 ## Running the tests
 

@@ -77,14 +77,14 @@ all  | 7 | hooked blocked q       | hook 'fail' (before hooked/blocked) failed w
 all  | 7 | hooked blocked q       | !blocked.sh: q
 # target fails: after hook still runs and sees the exit code; sd exits 3
 all  | 3 | hooked fails z         | fails.sh: z\nafter hook: hooked/fails exit=3
-# scripts outside hooked/ fire nothing (entry 4 is off)
+# scripts outside hooked/ fire nothing (entry 4 is OFF; written in lower case, which still reads)
 all  | 0 | hello c               | !hook
 
 # --- --which (SPEC 10.3) -------------------------------------------------------------------------
 all  | 0 | --which dev build 1 2  | name:        dev/build\nkind:        bundle
 win  | 0 | --which dev build 1 2  | build.bat\nruns with:   cmd\ndescription: Build the project\nargs:        1 2
 unix | 0 | --which dev build 1 2  | build.sh\nruns with:
-all  | 0 | --which hooked ok a     | before  pass      (on,  1)\n  after   after     (on,  2)\n  before  fail      (off, 4)
+all  | 0 | --which hooked ok a     | BEFORE  pass      (ON,  1)\n  AFTER   after     (ON,  2)\n  BEFORE  fail      (OFF, 4)
 # --which runs nothing and fires no hooks
 all  | 0 | --which hooked ok a     | !pass hook:
 all  | 0 | --which hooked ok a     | !ok.sh: a
@@ -103,15 +103,20 @@ all  | 1 | --new dev/build        |
 
 # --- --hooks (SPEC 10.1), numbered list, add, on/off/rm ------------------------------------
 # list columns: n, state (3), when (6), target (padded to the longest target), hook
-all  | 0 | --hooks               | 1  on   before  hooked/*
-all  | 0 | --hooks               | 4  off  before  *
+all  | 0 | --hooks               | 1  ON   BEFORE  hooked/*
+all  | 0 | --hooks               | 4  OFF  BEFORE  *
 all  | 1 | --hooks add after dev/deploy nohook | nohook
+# the usage explains where names start, with an example; a hooks/ prefix gets the name without it
+all  | 1 | --hooks add                         | --hooks add BEFORE dev/build lint
+all  | 1 | --hooks add before dev/deploy hooks/pass | 'pass', not 'hooks/pass'
+# input is case-insensitive; the file and the list use capitals
 all  | 0 | --hooks add after dev/deploy pass   |
-all  | 0 | --hooks               | 6  on   after   dev/deploy
+all  | 0 | --hooks               | 6  ON   AFTER   dev/deploy
 all  | 0 | dev deploy now        | deploy.sh: now\npass hook: after dev/deploy now
 all  | 0 | --hooks off 6         |
+all  | 0 | --hooks               | 6  OFF  AFTER   dev/deploy
 all  | 0 | dev deploy now        | !pass hook:
-all  | 0 | --hooks on 6          |
+all  | 0 | --hooks ON 6          |
 all  | 1 | --hooks rm 99         |
 
 # --- Export / import round trip (SPEC 10.4, 10.5) ---------------------------------------------------
@@ -122,9 +127,9 @@ all  | 0 | --hooks rm 6           |
 all  | 0 | --hooks               | !dev/deploy
 # deploy.sh and the hook scripts already exist: refuse without --force
 all  | 1 | --import out.tar.gz    | deploy.sh
-# with --force: files copied, entry added as off with number 6, and the command to switch it on
+# with --force: files copied, entry added as OFF with number 6, and the command to switch it on
 all  | 0 | --import out.tar.gz --force | --hooks on 6
-all  | 0 | --hooks               | 6  off  after   dev/deploy
+all  | 0 | --hooks               | 6  OFF  AFTER   dev/deploy
 all  | 0 | dev deploy z          | !pass hook:
 
 # --- Misc meta-commands --------------------------------------------------------------------------------

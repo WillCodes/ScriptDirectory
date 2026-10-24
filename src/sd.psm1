@@ -238,29 +238,34 @@ function Invoke-SdScript($Entry, [string[]]$ScriptArgs) {
 
 # ---- Hooks (§9, §10.1) ------------------------------------------------------------------------
 
-$script:HooksHeader = '# sd hooks: state (on|off), when (before|after), target (script name or glob), hook (in hooks/)',
+$script:HooksHeader = '# sd hooks: state (ON|OFF), when (BEFORE|AFTER), target (script name or glob), hook (in this folder)',
                       '# state  when    target          hook'
 
 # hooks.conf (§9.2, or the file $File): the raw Lines, kept as they are, and the valid Entries (Line = index in Lines, N, State,
 # When, Target, Hook). A trailing "# comment" after the columns is allowed. Bad lines are warned about and skipped.
 function Get-SdHooksConf([string]$File) {
-    $path = $File ? $File : (Join-Path $script:Cfg.Root 'hooks.conf')
+    $path = $File ? $File : (Join-Path $script:Cfg.Root 'hooks\hooks.conf')
+    $old = Join-Path $script:Cfg.Root 'hooks.conf'   # where it used to be
+    if (-not $File -and -not (Test-Path -LiteralPath $path) -and (Test-Path -LiteralPath $old)) {
+        Write-SdWarning "$old is no longer read: move it to $path"
+    }
     $lines = (Test-Path -LiteralPath $path) ? @(Get-Content -LiteralPath $path) : @()
     $n = 0
     $entries = @(for ($i = 0; $i -lt $lines.Count; $i++) {
         $c = @(($lines[$i] -replace '(^|\s)#.*$').Trim() -split '\s+' | Where-Object { $_ })
         if (-not $c) { continue }
         $err = if ($c.Count -ne 4) { "expected 4 columns (state when target hook), found $($c.Count)" }
-            elseif ($c[0] -cnotin 'on', 'off') { "state must be on or off, not '$($c[0])'" }
-            elseif ($c[1] -cnotin 'before', 'after') { "when must be before or after, not '$($c[1])'" }
+            elseif ($c[0] -notin 'ON', 'OFF') { "state must be ON or OFF, not '$($c[0])'" }
+            elseif ($c[1] -notin 'BEFORE', 'AFTER') { "when must be BEFORE or AFTER, not '$($c[1])'" }
         if ($err) { Write-SdWarning "$(Split-Path $path -Leaf) line $($i + 1): $err"; continue }
         $n++
-        [pscustomobject]@{ Line = $i; N = $n; State = $c[0]; When = $c[1]; Target = $c[2]; Hook = $c[3] }
+        [pscustomobject]@{ Line = $i; N = $n; State = $c[0].ToUpper(); When = $c[1].ToUpper(); Target = $c[2]; Hook = $c[3] }
     })
     [pscustomobject]@{ Path = $path; Lines = $lines; Entries = $entries }
 }
 
 function Save-SdHooksConf([string]$Path, [string[]]$Lines) {   # LF endings, the bash core reads it too
+    $null = New-Item -ItemType Directory -Path (Split-Path $Path) -Force
     [IO.File]::WriteAllText($Path, (@($Lines | ForEach-Object { "$_`n" }) -join ''), [Text.UTF8Encoding]::new($false))
 }
 
@@ -300,7 +305,7 @@ function Invoke-SdPhase($Hooks, [string]$Phase, $Entry, [string[]]$ScriptArgs, $
 # §9.3: before hooks, the script, after hooks. The result is the script's exit code (or the failed hook's).
 function Invoke-SdWithHooks($Entry, [string[]]$ScriptArgs) {
     $hooks = $env:SD_NO_HOOKS -eq '1' ? @() : @((Get-SdHooksConf).Entries |
-        Where-Object { $_.State -eq 'on' -and (Test-SdGlob $_.Target $Entry.Name) })
+        Where-Object { $_.State -eq 'ON' -and (Test-SdGlob $_.Target $Entry.Name) })
     Invoke-SdPhase $hooks before $Entry $ScriptArgs
     if ($global:LASTEXITCODE) { return }
     Invoke-SdScript $Entry $ScriptArgs
@@ -321,9 +326,19 @@ function Show-SdWhichHooks([string]$Name) {
     }
 }
 
+# §10.1: what --hooks add takes, with an example. The target is named from the root, the hook from hooks/.
+function Get-SdHooksAddHelp {
+    $name = $script:Cfg.Name
+    "usage: --hooks add <BEFORE|AFTER> <target> <hook>",
+    "  <target>  a script, named from the sd root as you run it (dev/build), or a glob (dev/*)",
+    "  <hook>    a script in $($script:Cfg.Root)\hooks, named from there (lint for hooks/lint.bat or hooks/lint.sh)",
+    "example: $name --hooks add BEFORE dev/build lint",
+    "  runs hooks/lint before every '$name dev build'" -join "`n"
+}
+
 # §10.1 list: n  state  when  target  hook
 function Show-SdHooks($Entries) {
-    if (-not $Entries) { return }
+    if (-not $Entries) { return "no hooks yet.`n$(Get-SdHooksAddHelp)" }
     $nw = "$($Entries.Count)".Length
     $tw = ($Entries.Target | Measure-Object -Property Length -Maximum).Maximum
     foreach ($e in $Entries) {
@@ -340,33 +355,37 @@ function Get-SdScriptNames([string]$Dir, [string]$Prefix = '') {
 }
 
 function Add-SdHook($Conf, [string[]]$Spec) {
-    if ($Spec.Count -ne 3 -or $Spec[0] -cnotin 'before', 'after' -or ($Spec | Where-Object { $_ -match '\s|^#' })) {
-        return Write-SdError 'usage: --hooks add <before|after> <target> <hook>'
+    if ($Spec.Count -ne 3 -or $Spec[0] -notin 'BEFORE', 'AFTER' -or ($Spec | Where-Object { $_ -match '\s|^#' })) {
+        return Write-SdError (Get-SdHooksAddHelp)
     }
     $when, $target, $hook = $Spec
-    if (-not (Find-SdHook $hook)) { return Write-SdError "hook '$hook' not found in $($script:Cfg.Root)\hooks" }
+    $when = $when.ToUpper()
+    if (-not (Find-SdHook $hook)) {
+        if ($hook -match '^hooks/.') { return Write-SdError "hooks are named from the hooks folder: '$($hook.Substring(6))', not '$hook'" }
+        return Write-SdError "hook '$hook' not found in $($script:Cfg.Root)\hooks (make one with: $($script:Cfg.Name) --new hooks/$hook)"
+    }
     if (-not (Get-SdScriptNames $script:Cfg.Root | Where-Object { Test-SdGlob $target $_ })) {
-        Write-SdWarning "target '$target' matches no script"
+        Write-SdWarning "target '$target' matches no script (targets are named from the sd root, like dev/build)"
     }
     $lines = (Test-Path -LiteralPath $Conf.Path) ? $Conf.Lines : $script:HooksHeader   # columns as in the header
-    Save-SdHooksConf $Conf.Path (@($lines) + ('on       {0}  {1}  {2}' -f $when.PadRight(6), $target.PadRight(14), $hook))
+    Save-SdHooksConf $Conf.Path (@($lines) + ('ON       {0}  {1}  {2}' -f $when.PadRight(6), $target.PadRight(14), $hook))
     "added entry $($Conf.Entries.Count + 1)"
 }
 
-# rm / on / off <n>: touches only that line.
+# rm / on / off <n> (any case): touches only that line, writing the state as ON / OFF.
 function Update-SdHook($Conf, [string]$Action, [string[]]$Spec) {
     $n = $Spec.Count -eq 1 -and $Spec[0] -match '^\d+$' ? [int]$Spec[0] : 0
     if ($n -lt 1 -or $n -gt $Conf.Entries.Count) {
-        return Write-SdError "no hook entry '$($Spec -join ' ')' (see --hooks); usage: --hooks $Action <n>"
+        return Write-SdError "no hook entry '$($Spec -join ' ')' (see --hooks); usage: --hooks $($Action.ToLower()) <n>"
     }
     $e = $Conf.Entries[$n - 1]
     $lines = [Collections.Generic.List[string]]$Conf.Lines
     if ($Action -eq 'rm') {
         $lines.RemoveAt($e.Line)
     } else {   # swap the state word, keeping the later columns where they are if there are spaces to absorb it
-        $m = [regex]::Match($lines[$e.Line], '^(\s*)(on|off)(\s+)')
+        $m = [regex]::Match($lines[$e.Line], '(?i)^(\s*)(on|off)(\s+)')
         $pad = [Math]::Max(1, $m.Groups[2].Length + $m.Groups[3].Length - $Action.Length)
-        $lines[$e.Line] = $m.Groups[1].Value + $Action + ' ' * $pad + $lines[$e.Line].Substring($m.Length)
+        $lines[$e.Line] = $m.Groups[1].Value + $Action.ToUpper() + ' ' * $pad + $lines[$e.Line].Substring($m.Length)
     }
     Save-SdHooksConf $Conf.Path $lines
 }
@@ -382,7 +401,7 @@ function Invoke-SdHooksCommand([string[]]$Rest) {
             Open-SdEditor $conf.Path
         }
         { $_ -in 'rm', 'on', 'off' } { Update-SdHook $conf $_ $more }
-        default { Write-SdError 'usage: --hooks [add <before|after> <target> <hook> | rm <n> | on <n> | off <n> | edit]' }
+        default { Write-SdError 'usage: --hooks [add <BEFORE|AFTER> <target> <hook> | rm <n> | on <n> | off <n> | edit]' }
     }
 }
 
@@ -431,7 +450,7 @@ function Export-SdFiles([string[]]$Rest) {
     New-Item -ItemType Directory $tmp | Out-Null
     try {
         Save-SdHooksConf (Join-Path $tmp 'sd-export.conf') (
-            @('# sd export: hooks.conf entries, added as off on import') + @($picked | ForEach-Object { $conf.Lines[$_.Line] }))
+            @('# sd export: hooks.conf entries, added as OFF on import') + @($picked | ForEach-Object { $conf.Lines[$_.Line] }))
         & $script:Tar -czf $out -C $tmp sd-export.conf -C $script:Cfg.Root @files
         if ($LASTEXITCODE) { return Write-SdError "tar failed writing $out" }
     } finally { Remove-Item -LiteralPath $tmp -Recurse -Force }
@@ -451,7 +470,7 @@ function Test-SdArchive([string]$File) {
     if ($links) { return "unsafe entry in archive (not a plain file or folder): $($links[0])" }
     if ('sd-export.conf' -notin ($names -replace '^\./')) { return "$File is not an sd export (no sd-export.conf)" }
     # Entries only arrive through sd-export.conf, added as off; a hooks.conf would replace the user's own.
-    if ('hooks.conf' -in ($names -replace '^\./')) { return "$File contains a hooks.conf, which is never imported" }
+    if ('hooks/hooks.conf' -in ($names -replace '^\./')) { return "$File contains a hooks.conf, which is never imported" }
 }
 
 function Import-SdFiles([string[]]$Rest) {
@@ -491,14 +510,14 @@ function Import-SdFiles([string[]]$Rest) {
         $key = "$($e.When) $($e.Target) $($e.Hook)"
         if ($key -in $known) { $skipped++; continue }
         $known += $key
-        $lines += 'off      {0}  {1}  {2}' -f $e.When.PadRight(6), $e.Target.PadRight(14), $e.Hook
+        $lines += 'OFF      {0}  {1}  {2}' -f $e.When.PadRight(6), $e.Target.PadRight(14), $e.Hook
         $added += [pscustomobject]@{ N = $conf.Entries.Count + $added.Count + 1; When = $e.When; Target = $e.Target; Hook = $e.Hook }
     }
     if ($added) { Save-SdHooksConf $conf.Path $lines }
     "imported $($rels.Count) file(s):"
     $rels | ForEach-Object { "  $_" }
     if ($added) {
-        'hook entries added (all off):'
+        'hook entries added (all OFF):'
         $added | ForEach-Object { "  $($_.N)  $($_.When)  $($_.Target)  $($_.Hook)" }
         'switch them on with:'
         $added | ForEach-Object { "  $($script:Cfg.Name) --hooks on $($_.N)" }

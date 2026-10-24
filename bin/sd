@@ -351,7 +351,7 @@ sd_run() {
 
 # ---- Hooks (§9, §10.1) ------------------------------------------------------------------------
 
-HOOKS_HEADER=('# sd hooks: state (on|off), when (before|after), target (script name or glob), hook (in hooks/)'
+HOOKS_HEADER=('# sd hooks: state (ON|OFF), when (BEFORE|AFTER), target (script name or glob), hook (in this folder)'
               '# state  when    target          hook')
 
 # sd_hooks_conf [file]: hooks.conf (§9.2, or <file>). HC_PATH; HC_LINES, the raw lines, kept as they are;
@@ -360,8 +360,11 @@ HOOKS_HEADER=('# sd hooks: state (on|off), when (before|after), target (script n
 sd_hooks_conf() {
     local line err i re='(^|[[:space:]])#.*$'
     local -a c
-    HC_PATH=${1:-$ROOT/hooks.conf}
+    HC_PATH=${1:-$ROOT/hooks/hooks.conf}
     HC_LINES=() H_LINE=() H_STATE=() H_WHEN=() H_TARGET=() H_HOOK=()
+    if [ $# -eq 0 ] && [ ! -f "$HC_PATH" ] && [ -f "$ROOT/hooks.conf" ]; then   # where it used to be
+        sd_warning "$ROOT/hooks.conf is no longer read: move it to $HC_PATH"
+    fi
     if [ -f "$HC_PATH" ]; then
         while IFS= read -r line || [ -n "$line" ]; do HC_LINES+=("${line%$'\r'}"); done < "$HC_PATH"
     fi
@@ -373,17 +376,31 @@ sd_hooks_conf() {
         [ ${#c[@]} -eq 0 ] && continue
         err=
         if [ ${#c[@]} -ne 4 ]; then err="expected 4 columns (state when target hook), found ${#c[@]}"
-        elif [ "${c[0]}" != on ] && [ "${c[0]}" != off ]; then err="state must be on or off, not '${c[0]}'"
-        elif [ "${c[1]}" != before ] && [ "${c[1]}" != after ]; then err="when must be before or after, not '${c[1]}'"
+        elif ! sd_choice "${c[0]}" ON OFF; then err="state must be ON or OFF, not '${c[0]}'"
+        else
+            c[0]=$CHOICE
+            if sd_choice "${c[1]}" BEFORE AFTER; then c[1]=$CHOICE; else err="when must be BEFORE or AFTER, not '${c[1]}'"; fi
         fi
         if [ -n "$err" ]; then sd_warning "${HC_PATH##*/} line $((i + 1)): $err"; continue; fi
         H_LINE+=("$i") H_STATE+=("${c[0]}") H_WHEN+=("${c[1]}") H_TARGET+=("${c[2]}") H_HOOK+=("${c[3]}")
     done
 }
 
+# sd_choice <word> <choice>...: CHOICE = the choice that <word> is, ignoring case (no ${x^^} in bash 3.2);
+# status 1 if none.
+sd_choice() {
+    local w=$1 c
+    shift
+    shopt -s nocasematch
+    for c; do [[ $w == "$c" ]] && { shopt -u nocasematch; CHOICE=$c; return 0; }; done
+    shopt -u nocasematch
+    return 1
+}
+
 sd_save_hooks() {   # <path> <line>...: LF endings
     local line path=$1
     shift
+    mkdir -p "${path%/*}"
     { for line in "$@"; do printf '%s\n' "$line"; done; } > "$path"
 }
 
@@ -413,10 +430,11 @@ sd_find_hook() {
 # that belong to this phase in order (§9.3). Status: the exit code of the before hook that failed (the rest
 # is skipped), else 0. A failing after hook only warns.
 sd_phase() {
-    local phase=$1 target=$2 code=$3 i rc
+    local phase=$1 target=$2 code=$3 i rc when=BEFORE
     shift 3
+    [ "$phase" = after ] && when=AFTER
     for i in "${SEL[@]}"; do
-        [ "${H_WHEN[i]}" = "$phase" ] || continue
+        [ "${H_WHEN[i]}" = "$when" ] || continue
         if ! sd_find_hook "${H_HOOK[i]}"; then
             sd_warning "hook '${H_HOOK[i]}' not found (hooks.conf entry $((i + 1)))"
             continue
@@ -444,7 +462,7 @@ sd_with_hooks() {
     if [ "${SD_NO_HOOKS:-}" != 1 ]; then
         sd_hooks_conf
         for i in "${!H_HOOK[@]}"; do
-            [ "${H_STATE[i]}" = on ] && sd_glob "${H_TARGET[i]}" "$name" && SEL+=("$i")
+            [ "${H_STATE[i]}" = ON ] && sd_glob "${H_TARGET[i]}" "$name" && SEL+=("$i")
         done
     fi
     sd_phase before "$name" '' "${@:4}" || { STATUS=$?; return; }
@@ -473,10 +491,19 @@ sd_show_which_hooks() {
     done
 }
 
+# §10.1: HELP = what --hooks add takes, with an example. The target is named from the root, the hook from hooks/.
+sd_hooks_add_help() {
+    HELP="usage: --hooks add <BEFORE|AFTER> <target> <hook>
+  <target>  a script, named from the sd root as you run it (dev/build), or a glob (dev/*)
+  <hook>    a script in $ROOT/hooks, named from there (lint for hooks/lint.sh)
+example: $CMD --hooks add BEFORE dev/build lint
+  runs hooks/lint before every '$CMD dev build'"
+}
+
 # §10.1 list: n  state  when  target  hook
 sd_show_hooks() {
     local i nw=${#H_HOOK[@]} tw=0 s w t miss
-    [ $nw -gt 0 ] || return 0
+    if [ $nw -eq 0 ]; then sd_hooks_add_help; printf 'no hooks yet.\n%s\n' "$HELP"; return 0; fi
     nw=${#nw}
     for i in "${!H_TARGET[@]}"; do [ ${#H_TARGET[i]} -gt $tw ] && tw=${#H_TARGET[i]}; done
     for i in "${!H_HOOK[@]}"; do
@@ -499,32 +526,36 @@ sd_script_names() {   # <folder> <prefix>
     done
 }
 
-sd_hooks_add() {   # <before|after> <target> <hook>
-    local s n w t bad=0 matched=0
+sd_hooks_add() {   # <BEFORE|AFTER> <target> <hook> (any case)
+    local s n w t when bad=0 matched=0
     local -a lines
-    [ $# -eq 3 ] && { [ "$1" = before ] || [ "$1" = after ]; } || bad=1
+    [ $# -eq 3 ] && sd_choice "$1" BEFORE AFTER && when=$CHOICE || bad=1
     for s; do [[ $s == *[[:space:]]* || $s == '#'* ]] && bad=1; done
-    if [ $bad = 1 ]; then sd_error 'usage: --hooks add <before|after> <target> <hook>'; return; fi
-    sd_find_hook "$3" || { sd_error "hook '$3' not found in $ROOT/hooks"; return; }
+    if [ $bad = 1 ]; then sd_hooks_add_help; sd_error "$HELP"; return; fi
+    if ! sd_find_hook "$3"; then
+        if [[ $3 == hooks/?* ]]; then sd_error "hooks are named from the hooks folder: '${3#hooks/}', not '$3'"
+        else sd_error "hook '$3' not found in $ROOT/hooks (make one with: $CMD --new hooks/$3)"; fi
+        return
+    fi
     NAMES=()
     sd_script_names "$ROOT" ''
     for n in "${NAMES[@]}"; do sd_glob "$2" "$n" && { matched=1; break; }; done
-    [ $matched = 1 ] || sd_warning "target '$2' matches no script"
+    [ $matched = 1 ] || sd_warning "target '$2' matches no script (targets are named from the sd root, like dev/build)"
     if [ -f "$HC_PATH" ]; then lines=("${HC_LINES[@]}"); else lines=("${HOOKS_HEADER[@]}"); fi   # columns as in the header
-    sd_pad "$1" 6 w; sd_pad "$2" 14 t
-    lines+=("on       $w  $t  $3")
+    sd_pad "$when" 6 w; sd_pad "$2" 14 t
+    lines+=("ON       $w  $t  $3")
     sd_save_hooks "$HC_PATH" "${lines[@]}"
     echo "added entry $((${#H_HOOK[@]} + 1))"
 }
 
-# rm / on / off <n>: touches only that line.
+# rm / ON / OFF <n>: touches only that line.
 sd_hooks_update() {
-    local action=$1 n=0 l j m1 m2 m3 pad sp re='^([[:space:]]*)(on|off)([[:space:]]+)'
+    local action=$1 n=0 l j m1 m2 m3 pad sp re='^([[:space:]]*)([oO][nN]|[oO][fF][fF])([[:space:]]+)'
     local -a out=()
     shift
     if [ $# -eq 1 ] && [[ $1 =~ ^[0-9]+$ ]]; then n=$((10#$1)); fi
     if [ $n -lt 1 ] || [ $n -gt ${#H_HOOK[@]} ]; then
-        sd_error "no hook entry '$*' (see --hooks); usage: --hooks $action <n>"
+        sd_error "no hook entry '$*' (see --hooks); usage: --hooks rm|on|off <n>"
         return
     fi
     l=${H_LINE[n - 1]}
@@ -553,8 +584,10 @@ sd_hooks_command() {
         edit)
             [ -f "$HC_PATH" ] || sd_save_hooks "$HC_PATH" "${HOOKS_HEADER[@]}"
             sd_editor "$HC_PATH" ;;
-        rm|on|off) sd_hooks_update "$cmd" "$@" ;;
-        *)   sd_error 'usage: --hooks [add <before|after> <target> <hook> | rm <n> | on <n> | off <n> | edit]' ;;
+        rm)  sd_hooks_update rm "$@" ;;
+        *)
+            if sd_choice "$cmd" ON OFF; then sd_hooks_update "$CHOICE" "$@"
+            else sd_error 'usage: --hooks [add <BEFORE|AFTER> <target> <hook> | rm <n> | on <n> | off <n> | edit]'; fi ;;
     esac
 }
 
@@ -637,7 +670,7 @@ sd_export() {
     done
 
     sd_mktemp || { sd_error 'cannot create a temporary folder'; return; }
-    { echo '# sd export: hooks.conf entries, added as off on import'
+    { echo '# sd export: hooks.conf entries, added as OFF on import'
       for i in "${picked[@]}"; do printf '%s\n' "${HC_LINES[H_LINE[i]]}"; done; } > "$WORK/sd-export.conf"
     # -h: a symlinked script is stored as a file (import refuses links)
     tar -czhf "$out" -C "$WORK" sd-export.conf -C "$ROOT" "${OUT[@]}" || { sd_error "tar failed writing $out"; return; }
@@ -659,7 +692,7 @@ sd_test_archive() {
         case $line in /*|*\\*|*:*) PROBLEM="unsafe path in archive: $line"; return 1 ;; esac
         if [[ /$line/ == */../* ]]; then PROBLEM="unsafe path in archive: $line"; return 1; fi
         [ "${line#./}" = sd-export.conf ] && has_conf=1
-        [ "${line#./}" = hooks.conf ] && has_hooks=1
+        [ "${line#./}" = hooks/hooks.conf ] && has_hooks=1
     done <<<"$names"
     while IFS= read -r line; do   # symlinks, hard links, devices, ...
         case $line in -*|d*|'') ;; *) PROBLEM="unsafe entry in archive (not a plain file or folder): $line"; return 1 ;; esac
@@ -708,14 +741,14 @@ sd_import() {
         case $known in *"$nl$key$nl"*) skipped=$((skipped + 1)); continue ;; esac
         known=$known$key$nl
         sd_pad "${X_WHEN[i]}" 6 w; sd_pad "${X_TARGET[i]}" 14 t
-        lines+=("off      $w  $t  ${X_HOOK[i]}")
+        lines+=("OFF      $w  $t  ${X_HOOK[i]}")
         A_N+=($((${#H_HOOK[@]} + ${#A_N[@]} + 1))) A_WHEN+=("${X_WHEN[i]}") A_TARGET+=("${X_TARGET[i]}") A_HOOK+=("${X_HOOK[i]}")
     done
     [ ${#A_N[@]} -gt 0 ] && sd_save_hooks "$HC_PATH" "${lines[@]}"
     echo "imported ${#rels[@]} file(s):"
     printf '  %s\n' "${rels[@]}"
     if [ ${#A_N[@]} -gt 0 ]; then
-        echo 'hook entries added (all off):'
+        echo 'hook entries added (all OFF):'
         for i in "${!A_N[@]}"; do echo "  ${A_N[i]}  ${A_WHEN[i]}  ${A_TARGET[i]}  ${A_HOOK[i]}"; done
         echo 'switch them on with:'
         for i in "${!A_N[@]}"; do echo "  $CMD --hooks on ${A_N[i]}"; done

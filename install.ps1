@@ -82,14 +82,23 @@ if (-not (Test-Path -LiteralPath $Root) -or -not (Get-ChildItem -LiteralPath $Ro
     $describe = { $args[0].Replace('TODO: describe this script', 'Example script: prints its arguments') }
     Save "$Root\hello.sh" (& $describe (& $m { Get-SdTemplate '.sh' 'hello' $true }))
     Save "$Root\hello.bat" (& $describe (& $m { Get-SdTemplate '.bat' 'hello' $true }))
-    Save "$Root\hooks.conf" @'
-# Hooks: scripts in hooks/ that run before or after other scripts.
+}
+# Hook scripts and hooks.conf live in hooks\ (§9). Any root gets them: new files overwrite nothing.
+if (-not (Test-Path -LiteralPath "$Root\hooks" -PathType Container)) { $null = New-Item -ItemType Directory -Path "$Root\hooks" }
+if ((Test-Path -LiteralPath "$Root\hooks.conf" -PathType Leaf) -and -not (Test-Path -LiteralPath "$Root\hooks\hooks.conf")) {
+    Move-Item -LiteralPath "$Root\hooks.conf" "$Root\hooks\hooks.conf"   # where it used to be
+    Write-Host "Moved $Root\hooks.conf to $Root\hooks\hooks.conf."
+} elseif (-not (Test-Path -LiteralPath "$Root\hooks\hooks.conf")) {
+    Save "$Root\hooks\hooks.conf" @'
+# Hooks: scripts in this folder that run before or after other scripts.
 # One hook per line, whitespace-separated columns ('#' starts a comment):
 #   state  when    target      hook
-#   on     before  dev/build   lint
-#   off    after   dev/*       notify
-# state: on | off.  when: before | after.  hook: a name under hooks/.
-# target: a script name or a glob; '*' matches any characters, including '/'.
+#   ON     BEFORE  dev/build   lint
+#   OFF    AFTER   dev/*       notify
+# state: ON | OFF.  when: BEFORE | AFTER.
+# target: a script named from the sd root as you run it, or a glob; '*' matches any characters, including '/'.
+# hook: a script in this folder, named from here (lint for lint.bat or lint.sh).
+# Add one with: --hooks add BEFORE dev/build lint
 # Manage entries with: --hooks, --hooks add|rm|on|off|edit
 '@
 }
@@ -151,6 +160,7 @@ Write-Host @"
 
 sd is set up.
   root:     $Root
+  hooks:    $Root\hooks
   name:     $Name
   config:   $configFile
   bin:      $bin

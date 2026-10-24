@@ -76,14 +76,23 @@ if [ ! -d "$Root" ] || [ -z "$(ls -A "$Root")" ]; then
     mkdir -p "$Root" || die "cannot create '$Root'"
     sed 's/TODO: describe this script/Example script: prints its arguments/' "$repo/templates/script.sh" > "$Root/hello.sh"
     chmod +x "$Root/hello.sh"
-    cat > "$Root/hooks.conf" <<'HOOKS'
-# Hooks: scripts in hooks/ that run before or after other scripts.
+fi
+# Hook scripts and hooks.conf live in hooks/ (§9). Any root gets them: new files overwrite nothing.
+[ -d "$Root/hooks" ] || mkdir "$Root/hooks" || die "cannot create '$Root/hooks'"
+if [ -f "$Root/hooks.conf" ] && [ ! -e "$Root/hooks/hooks.conf" ]; then   # where it used to be
+    mv "$Root/hooks.conf" "$Root/hooks/hooks.conf" || die "cannot move '$Root/hooks.conf' into hooks/"
+    echo "Moved $Root/hooks.conf to $Root/hooks/hooks.conf."
+elif [ ! -e "$Root/hooks/hooks.conf" ]; then
+    cat > "$Root/hooks/hooks.conf" <<'HOOKS'
+# Hooks: scripts in this folder that run before or after other scripts.
 # One hook per line, whitespace-separated columns ('#' starts a comment):
 #   state  when    target      hook
-#   on     before  dev/build   lint
-#   off    after   dev/*       notify
-# state: on | off.  when: before | after.  hook: a name under hooks/.
-# target: a script name or a glob; '*' matches any characters, including '/'.
+#   ON     BEFORE  dev/build   lint
+#   OFF    AFTER   dev/*       notify
+# state: ON | OFF.  when: BEFORE | AFTER.
+# target: a script named from the sd root as you run it, or a glob; '*' matches any characters, including '/'.
+# hook: a script in this folder, named from here (lint for lint.sh).
+# Add one with: --hooks add BEFORE dev/build lint
 # Manage entries with: --hooks, --hooks add|rm|on|off|edit
 HOOKS
 fi
@@ -125,6 +134,7 @@ cat <<EOF2
 
 sd is set up.
   root:     $Root
+  hooks:    $Root/hooks
   name:     $Name
   config:   $configFile
   bin:      $bin/$Name -> $repo/bin/sd

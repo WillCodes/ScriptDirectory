@@ -76,7 +76,7 @@ The environment variable `SD_ROOT`, if set, overrides `root`.
 | Path | Purpose |
 |---|---|
 | `<root>/hooks/` | Hook scripts. Hidden from resolution, listing and completion. |
-| `<root>/hooks.conf` | Hook configuration (§9.2). Kept in the root so it travels with the scripts (e.g. in git). |
+| `<root>/hooks/hooks.conf` | Hook configuration (§9.2). Kept with the hooks so it travels with the scripts (e.g. in git). |
 | `<root>/**/.help` | Folder description (§6). |
 
 ## 4. Invocation
@@ -106,7 +106,7 @@ When a script is found, **all remaining words are passed to it as arguments, unc
 
 If the words run out while still in a namespace, print the listing of that namespace and exit 0.
 
-Ignored at every level: entries whose names start with `.`, and `.ps1` files. Also ignored at the root: `hooks/` and `hooks.conf`.
+Ignored at every level: entries whose names start with `.`, and `.ps1` files. Also ignored at the root: `hooks/`.
 
 Matching words to names is exact: case-sensitive on Unix, case-insensitive on Windows (following the file system).
 Fuzzy matching only applies to completion (§8.2), never to running.
@@ -236,19 +236,22 @@ They can't be run as `sd hooks ...`.
 
 ### 9.2 `hooks.conf`
 
+`<root>/hooks/hooks.conf`. It can't be mistaken for a hook: `hooks.conf` has no runnable extension (§5.2).
+If it is missing and an old `<root>/hooks.conf` exists, `sd` warns that the old file is no longer read and where to move it.
+
 Whitespace-separated columns, one hook per line. `#` starts a comment, blank lines are ignored.
 
 ```
 # state  when    target      hook
-on       before  dev/build   lint
-on       after   dev/*       notify
-off      before  *           log-start
+ON       BEFORE  dev/build   lint
+ON       AFTER   dev/*       notify
+OFF      BEFORE  *           log-start
 ```
 
 | Column | Values |
 |---|---|
-| state | `on` / `off` |
-| when | `before` / `after` |
+| state | `ON` / `OFF`. Read in any case; `sd` writes capitals. |
+| when | `BEFORE` / `AFTER`. Read in any case; `sd` writes and shows capitals. |
 | target | A script name or glob. `*` matches any characters, including `/`. `dev/*` matches `dev/build` and `dev/x/y`. `*` matches everything. |
 | hook | A hook name, relative to `hooks/`. |
 
@@ -259,10 +262,10 @@ A malformed line is reported on stderr with its line number and skipped. Other l
 
 When script `T` is run with arguments `A`:
 
-1. All `on` + `before` entries whose target matches `T` run in file order, each with arguments `A`.
+1. All `ON` + `BEFORE` entries whose target matches `T` run in file order, each with arguments `A`.
    If one exits non-zero: stderr shows `hook '<hook>' (before <T>) failed with exit <n>`. The remaining before hooks, `T` and all after hooks are skipped. `sd` exits with the hook's code.
 2. `T` runs with `A`.
-3. All `on` + `after` entries whose target matches `T` run in file order, each with arguments `A`, whether `T` succeeded or not.
+3. All `ON` + `AFTER` entries whose target matches `T` run in file order, each with arguments `A`, whether `T` succeeded or not.
    A failing after hook prints a warning on stderr. Later hooks still run.
 4. `sd` exits with `T`'s exit code.
 
@@ -298,16 +301,17 @@ Unknown meta-command: error, show the `--help` text, exit 1.
 
 ```
 sd --hooks                              numbered list (state, when, target, hook)
-sd --hooks add <before|after> <target> <hook>
+sd --hooks add <BEFORE|AFTER> <target> <hook>
 sd --hooks rm <n>
 sd --hooks on <n>
 sd --hooks off <n>
 sd --hooks edit                         open hooks.conf in the editor (§10.2), creating it if needed
 ```
 
-- `add` appends an `on` line. It fails if the hook doesn't exist. It warns (but still adds) if the target matches no current script. It creates `hooks.conf` with a header comment if missing.
-- `rm`, `on`, `off` change only the targeted line in place. Comments and formatting of other lines are kept.
-- The list prints `n  state  when  target  hook` per entry: state padded to 3, when to 6, target to the longest target, two spaces between columns, e.g. `6  off  after   dev/deploy  pass`.
+- `add` appends an `ON` line. `<BEFORE|AFTER>` and the `on` / `off` subcommands are taken in any case. `<target>` is a script name as it is run, from the root (`dev/build`), or a glob; `<hook>` is named from `hooks/` (`lint` for `hooks/lint.sh`). It fails if the hook doesn't exist (a name starting with `hooks/` gets a hint to drop that prefix). It warns (but still adds) if the target matches no current script. It creates `hooks.conf` with a header comment if missing.
+- A malformed `add` prints its usage, what `<target>` and `<hook>` are named from, and the example `sd --hooks add BEFORE dev/build lint`. With no entries, the list prints `no hooks yet.` and the same text.
+- `rm`, `on`, `off` change only the targeted line in place (`on` / `off` write `ON` / `OFF`). Comments and formatting of other lines are kept.
+- The list prints `n  state  when  target  hook` per entry: state padded to 3, when to 6, target to the longest target, two spaces between columns, e.g. `6  OFF  AFTER   dev/deploy  pass`.
 - The list marks entries whose hook is missing.
 
 ### 10.2 `--new`
@@ -362,9 +366,9 @@ runs with:   cmd
 description: Build the project
 args:        1 2
 hooks:
-  before  lint        (on,  1)
-  after   notify      (on,  2)
-  before  log-start   (off, 3)
+  BEFORE  lint        (ON,  1)
+  AFTER   notify      (ON,  2)
+  BEFORE  log-start   (OFF, 3)
 ```
 
 A hook line ends with ` missing` if its hook doesn't exist; with no matching entries the section is `hooks:       (none)`.
@@ -388,10 +392,10 @@ sd --export team.tar.gz dev/build dev/deploy tools hooks/lint
 sd --import team.tar.gz [--force]
 ```
 
-1. Unpack into a temporary folder. Reject the archive if any entry has an absolute path, `..`, or a link, if it has no `sd-export.conf`, or if it contains a root-level `hooks.conf` (entries only arrive through `sd-export.conf`). These checks run before anything is unpacked.
+1. Unpack into a temporary folder. Reject the archive if any entry has an absolute path, `..`, or a link, if it has no `sd-export.conf`, or if it contains a `hooks/hooks.conf` (entries only arrive through `sd-export.conf`). These checks run before anything is unpacked.
 2. Check for files that already exist in the root. If there are any and `--force` isn't given, list them and exit 1 without changing anything.
 3. Copy the files into the root.
-4. Add the `sd-export.conf` entries to the end of `hooks.conf` **as `off`**. An entry that matches an existing one on when + target + hook is skipped.
+4. Add the `sd-export.conf` entries to the end of `hooks.conf` **as `OFF`**. An entry that matches an existing one on when + target + hook is skipped.
 5. Print the files imported, the hook entries added (with their new numbers) and the `sd --hooks on <n>` command to switch each on.
 
 ## 11. Script execution
@@ -434,7 +438,7 @@ Steps:
 
 1. **Check requirements (§2).** Warn about missing pieces without installing anything. Exit only if PowerShell is below 7 (Windows).
 2. **Check the name.** Warn if `<name>` already resolves to another command (e.g. the Rust `sd` tool), and ask for confirmation.
-3. **Create the root** if missing, with one example script and a `hooks.conf` holding only the header comment.
+3. **Create the root** if missing, with one example script. Any root gets `hooks/` if missing, and `hooks/hooks.conf` holding only the header comment; an old `<root>/hooks.conf` is moved there instead.
 4. **Write the machine config** (§3.1).
 5. **Write entry points into the user bin folder** (`%LOCALAPPDATA%\sd\bin` on Windows, `~/.local/bin` on Unix), first removing those for any old name:
    - Windows: `<name>.cmd` (for cmd) and an extensionless `<name>` (for git-bash), both calling the PowerShell core.
