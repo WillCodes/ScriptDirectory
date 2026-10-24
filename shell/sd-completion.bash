@@ -14,7 +14,7 @@ if [ -r "$_sd_config" ]; then
 fi
 
 _sd_complete() {
-    local cur=${COMP_WORDS[COMP_CWORD]} out n t d l i width=0 mark all=1
+    local cur=${COMP_WORDS[COMP_CWORD]} out n t d l i width=0 mark all=1 half pad
     local names=() lines=() types=() descs=()
     out=$("$_SD_BIN" --complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" 2>/dev/null) || return 0
     out=${out//$'\r'/}   # in case a CRLF .help or script line slips through
@@ -28,11 +28,19 @@ _sd_complete() {
     COMPREPLY=()
     # A lone match is inserted, unless nothing was typed: then it's a folder's contents, shown like any other.
     if [ ${#names[@]} -eq 1 ] && [ -n "$cur" ]; then COMPREPLY=("${names[0]}"); return 0; fi
+    # Keep sd's order (namespaces first) instead of readline's alphabetical one: bash 4.4+.
+    if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 4 ]; }; then
+        compopt -o nosort 2>/dev/null
+    fi
+    half=$(( ${COLUMNS:-80} / 2 ))
     for i in "${!names[@]}"; do   # §7 display lines: padded name, marker, description
         case ${types[i]} in script) mark=▸;; conflict) mark='!';; *) mark=' ';; esac
         printf -v l '%-*s %s %s' "$width" "${lines[i]}" "$mark" "${descs[i]}"
-        COMPREPLY[i]=${l%"${l##*[![:space:]]}"}
-        [[ ${COMPREPLY[i]} == "$cur"* ]] || all=0
+        l=${l%"${l##*[![:space:]]}"}
+        [[ $l == "$cur"* ]] || all=0
+        # Readline fits as many columns as the longest entry allows; past half the screen, that's one per row.
+        [ ${#l} -lt $half ] && printf -v pad '%*s' $((half - ${#l})) '' && l=$l$pad
+        COMPREPLY[i]=$l
     done
     # Readline replaces the typed word with the longest common prefix of COMPREPLY. Fuzzy (and
     # differently-cased) matches don't start with the typed word, so that prefix could shorten or
