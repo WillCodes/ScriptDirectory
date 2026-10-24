@@ -682,8 +682,14 @@ function Test-SdNextMenu([string]$Line) {
     $r.Kind -eq 'namespace' -and @(Get-SdItems $r.Dir).Count -gt 0
 }
 
+# The number of candidates for the word that ends $Line (the command line up to the cursor).
+function Measure-SdCandidates([string]$Line) {
+    $script:Cfg = Get-SdConfig
+    @(Get-SdCandidates @($Line.TrimStart() -split '\s+' | Select-Object -Skip 1)).Count
+}
+
 # Tab opens the menu after "<name> ", and does whatever it did before everywhere else. Picking a namespace
-# opens its menu straight away. (No GetNewClosure: the handler must run in this module, to see its functions.)
+# opens its menu straight away; a lone match for a half-typed word is only filled in. (No GetNewClosure: the handler must run in this module, to see its functions.)
 if (Get-Module PSReadLine) {
     $script:PrevTab = (Get-PSReadLineKeyHandler -Chord Tab).Function
     if (-not [Microsoft.PowerShell.PSConsoleReadLine].GetMethod("$script:PrevTab")) { $script:PrevTab = 'TabCompleteNext' }
@@ -693,10 +699,13 @@ if (Get-Module PSReadLine) {
         if ($line -notmatch "^\s*$([regex]::Escape($script:CmdName))\s") {
             return [Microsoft.PowerShell.PSConsoleReadLine]::$($script:PrevTab)()
         }
+        # MenuComplete fills in a lone match without a menu, so count first: then there is no next menu either.
+        $lone = -not [char]::IsWhiteSpace($line[$cursor - 1]) -and (Measure-SdCandidates $line.Substring(0, $cursor)) -eq 1
         # MenuComplete returns once a pick is made (or Esc reverts it); go on while the pick leads to another menu.
         for ($i = 0; $i -lt 50; $i++) {
             $before = $line
             [Microsoft.PowerShell.PSConsoleReadLine]::MenuComplete()
+            if ($lone) { break }
             [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
             if ($line.TrimEnd() -eq $before.TrimEnd()) {   # Esc, or "(stop here)", whose space is removed again
                 if ($line.Length -gt $before.Length) { [Microsoft.PowerShell.PSConsoleReadLine]::Delete($before.Length, $line.Length - $before.Length) }
