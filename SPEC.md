@@ -160,13 +160,14 @@ A namespace's description is the first non-empty line of `<folder>/.help`.
 `sd` (root) and `sd <namespace>` print one entry per line, sorted case-insensitively, namespaces first:
 
 ```
-tools/     Helper utilities
-build    ▸ Build the project
-deploy   ▸ Push to staging
+tools/   Helper utilities
+build  ▸ Build the project
+deploy ▸ Push to staging
 ```
 
 - Namespaces have a trailing `/`. Scripts and bundles are marked `▸`. Conflicts are marked `!`.
-- Names are padded to the longest name. A missing description leaves the description column empty.
+- Each line is the name padded to the longest name, a space, the marker (a space for namespaces), a space and the description.
+  A missing description leaves the description column empty.
 - Exit code 0.
 
 ## 8. Completion
@@ -292,6 +293,7 @@ sd --hooks edit                         open hooks.conf in the editor (§10.2), 
 
 - `add` appends an `on` line. It fails if the hook doesn't exist. It warns (but still adds) if the target matches no current script. It creates `hooks.conf` with a header comment if missing.
 - `rm`, `on`, `off` change only the targeted line in place. Comments and formatting of other lines are kept.
+- The list prints `n  state  when  target  hook` per entry: state padded to 3, when to 6, target to the longest target, two spaces between columns, e.g. `6  off  after   dev/deploy  pass`.
 - The list marks entries whose hook is missing.
 
 ### 10.2 `--new`
@@ -385,6 +387,7 @@ sd --import team.tar.gz [--force]
 | Windows `.sh` / extensionless | `bash <file> <args>`, with Git for Windows `bash` found as in §2 |
 | Unix `.sh` / extensionless | Run directly if executable. Otherwise `bash <file> <args>`. |
 
+- **Windows `bash` on `PATH`:** if `bash` was found through `git.exe` (§2), its folder is put at the front of `PATH` while scripts and hooks run, so a `.bat` can hand off to `bash`. `PATH` is restored afterwards.
 - **Working directory:** the caller's current folder. `sd` never changes it.
 - **Standard streams:** stdin/stdout/stderr pass through, so interactive scripts work.
 - **Exit code:** as in §9.3.

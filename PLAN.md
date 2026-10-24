@@ -79,7 +79,7 @@ In `src/sd.psm1`, one exported `Invoke-Sd` plus internal functions:
 - The module reads `name` from the machine config. It defines a function with that name that calls `Invoke-Sd`.
 - `Register-ArgumentCompleter -Native`, with `ListItemText` = listing line and `CompletionText` = name (§8.3).
 - The Tab handler: `MenuComplete` when the line starts with `<name> `, the default otherwise.
-- The `bin/sd` hand-off: on `MINGW*`/`MSYS*` (from `uname -s`), it runs `exec pwsh -NoLogo -NoProfile -File <repo>/src/sd.ps1 "$@"`.
+- The `bin/sd` hand-off: on `MINGW*`/`MSYS*` (from `uname -s`), it runs `exec pwsh -NoLogo -NoProfile -File <repo>/src/sd.ps1 "$@"`, unless `SD_BASH_CORE=1` is set (used by `run.sh` to test the bash core under git-bash).
 
 **Done when:** manual checks in pwsh pass:
 - Tab menu shows descriptions plus folder/script markers.

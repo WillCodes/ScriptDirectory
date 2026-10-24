@@ -1,0 +1,133 @@
+# Shared test cases for the sd cores (see PLAN.md, phase 1).
+#
+# platform | exit | command | expected
+#
+#   platform  all, win or unix
+#   exit      expected exit code
+#   command   the words after `sd`, split on whitespace (no quoting). "" is an empty argument.
+#   expected  substring that must appear in stdout OR stderr (CRLF treated as LF).
+#             \t and \n are expanded. A leading ! means: appears in NEITHER. Empty = not checked.
+#
+# Cases run in file order on ONE shared copy of tests/root, so cases that change files
+# (--new, --hooks add/rm/on/off, --import) affect the cases after them.
+# Listing lines follow SPEC 7: name padded to the longest name, then " " + marker + " " + description.
+
+# --- Resolution, priority, arguments ---------------------------------------------------------
+all  | 0 | hello a b             | hello.sh: a b
+all  | 0 | noext x               | noext: x
+# both.bat + both.sh: .bat wins on Windows, .sh on Unix (SPEC 5.2)
+win  | 0 | both x                | both.bat: x
+unix | 0 | both x                | both.sh: x
+# winonly.bat exists only for Windows
+win  | 0 | winonly z              | winonly.bat: z
+unix | 1 | winonly                | no script or folder 'winonly'
+# folder + file of the same name (clash/ and clash.sh)
+all  | 1 | clash                  | ambiguous
+# dot-files and .ps1 never resolve
+all  | 1 | .hidden               | no script or folder '.hidden'
+all  | 1 | ignored                | no script or folder 'ignored'
+all  | 1 | nothere                | no script or folder 'nothere'
+all  | 1 | dev nothere            | no script or folder 'nothere'
+# bundle: build.bat calls build.sh on Windows; build.sh runs alone on Unix
+win  | 0 | dev build 1 2          | build.bat: 1 2\nbuild.sh: 1 2
+unix | 0 | dev build 1 2          | build.sh: 1 2
+# arguments are never resolved: "helper" and "dev" are passed through unchanged
+all  | 0 | dev build helper       | build.sh: helper
+all  | 0 | dev build dev          | build.sh: dev
+all  | 0 | dev sub deep q         | deep.sh: q
+all  | 0 | dev deploy "" x        | deploy.sh:  x
+
+# --- Listings (SPEC 7) -------------------------------------------------------------------------
+# root: namespaces first, descriptions from .help and from the script files
+all  | 0 |                        | dev/      Development tools\nhooked/
+all  | 0 |                        | hello   ▸ Say hello\nnoext   ▸ Extensionless script
+all  | 0 |                        | clash   ! ambiguous
+win  | 0 |                        | both    ▸ Both, bat side
+unix | 0 |                        | both    ▸ Both, sh side
+win  | 0 |                        | winonly ▸ Windows only
+unix | 0 |                        | !winonly
+all  | 0 |                        | !.hidden
+all  | 0 |                        | !ignored
+all  | 0 |                        | !hooks
+# namespace listing: nested namespace first, bundle and loose script after, helper hidden
+all  | 0 | dev                    | sub/     Nested namespace\nbuild  ▸ Build the project\ndeploy ▸ Push to staging
+all  | 0 | dev                    | !helper
+
+# --- Completion (SPEC 8) -------------------------------------------------------------------------
+all  | 0 | --complete dev b       | build\tscript\tBuild the project
+all  | 0 | --complete dev ""      | sub\tdir\tNested namespace\nbuild\tscript\tBuild the project\ndeploy\tscript\tPush to staging
+# case-insensitive prefix
+all  | 0 | --complete DE          | dev\tdir\tDevelopment tools
+# fuzzy fallback (no prefix match): d-p-l is a subsequence of "deploy" only
+all  | 0 | --complete dev dpl     | deploy\tscript\tPush to staging
+# fuzzy tie (same start, same span): alphabetical, so build before sub despite namespaces-first
+all  | 0 | --complete dev u       | build\tscript\tBuild the project\nsub\tdir\tNested namespace
+# a script was reached: arguments are not completed
+all  | 0 | --complete dev build x | !\t
+# meta-commands
+all  | 0 | --complete --h        | --hooks
+
+# --- Hooks at run time (SPEC 9.3); hooks.conf as shipped ----------------------------------------
+# before hook (entry 1) -> script -> after hook (entry 2); entry 5 names a missing hook: warning only
+all  | 0 | hooked ok a            | pass hook: before hooked/ok a\nok.sh: a\nafter hook: hooked/ok exit=0
+all  | 0 | hooked ok b            | missing
+# before hook fails (entry 3, exit 7): sd exits 7, target and after hooks do not run
+all  | 7 | hooked blocked q       | pass hook: before hooked/blocked q\nfail hook
+all  | 7 | hooked blocked q       | hook 'fail' (before hooked/blocked) failed with exit 7
+all  | 7 | hooked blocked q       | !blocked.sh: q
+# target fails: after hook still runs and sees the exit code; sd exits 3
+all  | 3 | hooked fails z         | fails.sh: z\nafter hook: hooked/fails exit=3
+# scripts outside hooked/ fire nothing (entry 4 is off)
+all  | 0 | hello c               | !hook
+
+# --- --which (SPEC 10.3) -------------------------------------------------------------------------
+all  | 0 | --which dev build 1 2  | name:        dev/build\nkind:        bundle
+win  | 0 | --which dev build 1 2  | build.bat\nruns with:   cmd\ndescription: Build the project\nargs:        1 2
+unix | 0 | --which dev build 1 2  | build.sh\nruns with:
+all  | 0 | --which hooked ok a     | before  pass      (on,  1)\n  after   after     (on,  2)\n  before  fail      (off, 4)
+# --which runs nothing and fires no hooks
+all  | 0 | --which hooked ok a     | !pass hook:
+all  | 0 | --which hooked ok a     | !ok.sh: a
+
+# --- --new (SPEC 10.2) -----------------------------------------------------------------------------
+all  | 0 | --new tmp/made --sh    | made.sh
+all  | 0 | tmp made x             | args: x
+# default files: Windows .bat + .sh (bat hands off to sh), Unix .sh
+all  | 0 | --new tmp/made2        | made2
+all  | 0 | tmp made2 y            | args: y
+all  | 1 | --new tmp/made2        | exists
+all  | 0 | --new tmp/bun --bundle --sh | bun.sh
+all  | 0 | tmp bun z              | args: z
+# dev/build is a bundle, so a loose dev/build would be a conflict
+all  | 1 | --new dev/build        |
+
+# --- --hooks (SPEC 10.1), numbered list, add, on/off/rm ------------------------------------
+# list columns: n, state (3), when (6), target (padded to the longest target), hook
+all  | 0 | --hooks               | 1  on   before  hooked/*
+all  | 0 | --hooks               | 4  off  before  *
+all  | 1 | --hooks add after dev/deploy nohook | nohook
+all  | 0 | --hooks add after dev/deploy pass   |
+all  | 0 | --hooks               | 6  on   after   dev/deploy
+all  | 0 | dev deploy now        | deploy.sh: now\npass hook: after dev/deploy now
+all  | 0 | --hooks off 6         |
+all  | 0 | dev deploy now        | !pass hook:
+all  | 0 | --hooks on 6          |
+all  | 1 | --hooks rm 99         |
+
+# --- Export / import round trip (SPEC 10.4, 10.5) ---------------------------------------------------
+# State: hooks.conf has entry 6 (after dev/deploy pass), switched on. out.tar.gz is written in the
+# runner's working directory.
+all  | 0 | --export out.tar.gz dev/deploy | deploy.sh
+all  | 0 | --hooks rm 6           |
+all  | 0 | --hooks               | !dev/deploy
+# deploy.sh and the hook scripts already exist: refuse without --force
+all  | 1 | --import out.tar.gz    | deploy.sh
+# with --force: files copied, entry added as off with number 6, and the command to switch it on
+all  | 0 | --import out.tar.gz --force | --hooks on 6
+all  | 0 | --hooks               | 6  off  after   dev/deploy
+all  | 0 | dev deploy z          | !pass hook:
+
+# --- Misc meta-commands --------------------------------------------------------------------------------
+all  | 0 | --help                | --hooks
+all  | 0 | --help                | !--complete
+all  | 1 | --bogus               | --bogus
