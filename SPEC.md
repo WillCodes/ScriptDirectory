@@ -32,7 +32,7 @@ Throughout this document `sd` refers to the command; its actual name is chosen a
 | Platform | Required | Notes |
 |---|---|---|
 | Windows | PowerShell 7+ (`pwsh`) | Needed for the core and completion. |
-| Windows | Git for Windows `bash` on `PATH` | Only needed to run `.sh` scripts. Setup warns if missing or if `bash` resolves to WSL (`C:\Windows\System32\bash.exe`). |
+| Windows | Git for Windows `bash` | Only needed to run `.sh` scripts. Found as `bash` on `PATH` unless that is WSL (`C:\Windows\System32\bash.exe`), else as `bin\bash.exe` in the Git install that `git.exe` on `PATH` belongs to. Setup warns if neither is found. |
 | Windows | `tar` | Ships with Windows 10+. Used by export/import. |
 | Unix (Linux, macOS) | bash 3.2+ | The core must not use bash 4+ features (associative arrays, `mapfile`, `${x,,}`, ...). |
 | Unix | `tar`, `gzip` | Used by export/import. |
