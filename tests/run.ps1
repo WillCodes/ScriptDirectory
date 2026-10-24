@@ -14,6 +14,7 @@ $pwsh = (Get-Process -Id $PID).Path
 # Runs sd with the given words; returns exit code, stdout and stderr (UTF-8, separately captured).
 function Invoke-Case([string[]]$Words) {
     $psi = [Diagnostics.ProcessStartInfo]::new($pwsh)
+    $psi.WorkingDirectory = $tmp   # Set-Location doesn't change the process cwd that children inherit
     foreach ($a in @('-NoLogo', '-NoProfile', '-File', "$repo/src/sd.ps1") + $Words) { $psi.ArgumentList.Add($a) }
     $psi.RedirectStandardInput = $psi.RedirectStandardOutput = $psi.RedirectStandardError = $true
     $psi.StandardOutputEncoding = $psi.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)

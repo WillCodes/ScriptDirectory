@@ -241,10 +241,10 @@ function Invoke-SdScript($Entry, [string[]]$ScriptArgs) {
 $script:HooksHeader = '# sd hooks: state (on|off), when (before|after), target (script name or glob), hook (in hooks/)',
                       '# state  when    target          hook'
 
-# hooks.conf (§9.2): the raw Lines, kept as they are, and the valid Entries (Line = index in Lines, N, State,
+# hooks.conf (§9.2, or the file $File): the raw Lines, kept as they are, and the valid Entries (Line = index in Lines, N, State,
 # When, Target, Hook). A trailing "# comment" after the columns is allowed. Bad lines are warned about and skipped.
-function Get-SdHooksConf {
-    $path = Join-Path $script:Cfg.Root 'hooks.conf'
+function Get-SdHooksConf([string]$File) {
+    $path = $File ? $File : (Join-Path $script:Cfg.Root 'hooks.conf')
     $lines = (Test-Path -LiteralPath $path) ? @(Get-Content -LiteralPath $path) : @()
     $n = 0
     $entries = @(for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -253,7 +253,7 @@ function Get-SdHooksConf {
         $err = if ($c.Count -ne 4) { "expected 4 columns (state when target hook), found $($c.Count)" }
             elseif ($c[0] -cnotin 'on', 'off') { "state must be on or off, not '$($c[0])'" }
             elseif ($c[1] -cnotin 'before', 'after') { "when must be before or after, not '$($c[1])'" }
-        if ($err) { Write-SdWarning "hooks.conf line $($i + 1): $err"; continue }
+        if ($err) { Write-SdWarning "$(Split-Path $path -Leaf) line $($i + 1): $err"; continue }
         $n++
         [pscustomobject]@{ Line = $i; N = $n; State = $c[0]; When = $c[1]; Target = $c[2]; Hook = $c[3] }
     })
@@ -386,6 +386,126 @@ function Invoke-SdHooksCommand([string[]]$Rest) {
     }
 }
 
+# ---- Export / import (§10.4, §10.5) -----------------------------------------------------------
+
+# Windows' own tar (bsdtar): under git-bash, `tar` on PATH is GNU tar, which reads C:\... as a remote host:path.
+$script:Tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+if (-not (Test-Path -LiteralPath $script:Tar)) { $script:Tar = 'tar' }
+
+# The root-relative paths of everything a resolved script, bundle or namespace consists of, whatever the platform.
+function Get-SdFilePaths($R) {
+    $files = $R.Kind -eq 'loose' ? $R.Entry.Files : (Get-ChildItem -LiteralPath $R.Dir -Recurse -File -Force)
+    $files.FullName | ForEach-Object { $_.Substring($script:Cfg.Root.Length + 1) -replace '\\', '/' }
+}
+
+function Export-SdFiles([string[]]$Rest) {
+    if ($Rest.Count -lt 2 -or $Rest[0].StartsWith('--')) { return Write-SdError 'usage: --export <file> <path>...' }
+    $out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Rest[0])
+    $files = [Collections.Generic.List[string]]::new()
+    $names = [Collections.Generic.List[string]]::new()   # script names that the hook entries' targets are matched against
+    $hooks = [Collections.Generic.List[string]]::new()   # hooks named explicitly
+    foreach ($path in $Rest | Select-Object -Skip 1) {
+        $p = ($path -replace '\\', '/').Trim('/')
+        $r = $p -match '^hooks/.' ? (Find-SdHook $p.Substring(6)) : (Resolve-SdEntry ($p -split '/'))
+        if (-not $r) { return Write-SdError "no hook '$p'" }
+        if ($r.Kind -in 'notfound', 'ambiguous') { return Write-SdError $r.Error }
+        if ($r.Args) { return Write-SdError "no script or folder '$p'" }
+        $files.AddRange([string[]]@(Get-SdFilePaths $r))
+        if ($p.StartsWith('hooks/')) { $hooks.Add($p.Substring(6)) }
+        elseif ($r.Kind -eq 'namespace') { $names.AddRange([string[]]@(Get-SdScriptNames $r.Dir "$($r.Name)/")) }
+        else { $names.Add($r.Name) }
+    }
+    $conf = Get-SdHooksConf
+    $picked = @($conf.Entries | Where-Object {
+        $e = $_
+        $e.Hook -in $hooks -or ($names | Where-Object { Test-SdGlob $e.Target $_ })
+    })
+    foreach ($e in $picked) {   # the hook scripts the entries use
+        $hook = Find-SdHook $e.Hook
+        if ($hook) { $files.AddRange([string[]]@(Get-SdFilePaths $hook)) }
+        else { Write-SdWarning "hook '$($e.Hook)' not found (hooks.conf entry $($e.N)), exporting the entry anyway" }
+    }
+    $files = @($files | Select-Object -Unique)
+
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) "sd-export-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory $tmp | Out-Null
+    try {
+        Save-SdHooksConf (Join-Path $tmp 'sd-export.conf') (
+            @('# sd export: hooks.conf entries, added as off on import') + @($picked | ForEach-Object { $conf.Lines[$_.Line] }))
+        & $script:Tar -czf $out -C $tmp sd-export.conf -C $script:Cfg.Root @files
+        if ($LASTEXITCODE) { return Write-SdError "tar failed writing $out" }
+    } finally { Remove-Item -LiteralPath $tmp -Recurse -Force }
+    "exported to $out"
+    'files:'
+    $files | ForEach-Object { "  $_" }
+    if ($picked) { 'hook entries:'; $picked | ForEach-Object { "  $($_.State)  $($_.When)  $($_.Target)  $($_.Hook)" } }
+}
+
+# §10.5 step 1: every name relative and inside the root, every entry a plain file or folder. Returns the problem.
+function Test-SdArchive([string]$File) {
+    $names = @(& $script:Tar -tzf $File 2>&1)
+    if ($LASTEXITCODE) { return "cannot read $File as a tar.gz archive: $names" }
+    $bad = $names | Where-Object { $_ -match '^[/\\]|[\\:]' -or ($_ -split '/') -contains '..' } | Select-Object -First 1
+    if ($bad) { return "unsafe path in archive: $bad" }
+    $links = @(& $script:Tar -tvzf $File 2>&1 | Where-Object { $_ -notmatch '^[-d]' })   # symlinks, hard links, devices, ...
+    if ($links) { return "unsafe entry in archive (not a plain file or folder): $($links[0])" }
+    if ('sd-export.conf' -notin ($names -replace '^\./')) { return "$File is not an sd export (no sd-export.conf)" }
+    # Entries only arrive through sd-export.conf, added as off; a hooks.conf would replace the user's own.
+    if ('hooks.conf' -in ($names -replace '^\./')) { return "$File contains a hooks.conf, which is never imported" }
+}
+
+function Import-SdFiles([string[]]$Rest) {
+    $force = $Rest -contains '--force'
+    $given = @($Rest | Where-Object { $_ -ne '--force' })
+    if ($given.Count -ne 1 -or $given[0].StartsWith('--')) { return Write-SdError 'usage: --import <file> [--force]' }
+    $file = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($given[0])
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return Write-SdError "no such file: $file" }
+    $problem = Test-SdArchive $file
+    if ($problem) { return Write-SdError $problem }
+
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) "sd-import-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory $tmp | Out-Null
+    try {
+        & $script:Tar -xzf $file -C $tmp
+        if ($LASTEXITCODE) { return Write-SdError "tar failed extracting $file" }
+        $rels = @(Get-ChildItem -LiteralPath $tmp -Recurse -File -Force |
+            ForEach-Object { $_.FullName.Substring($tmp.Length + 1) -replace '\\', '/' } | Where-Object { $_ -ne 'sd-export.conf' })
+        $exists = @($rels | Where-Object { Test-Path -LiteralPath (Join-Path $script:Cfg.Root $_) })
+        if ($exists -and -not $force) {
+            $exists | ForEach-Object { [Console]::Error.WriteLine("  exists: $_") }
+            return Write-SdError 'nothing imported, these files already exist (use --force to overwrite)'
+        }
+        foreach ($rel in $rels) {
+            $dest = Join-Path $script:Cfg.Root $rel
+            New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $tmp $rel) -Destination $dest -Force
+        }
+        $incoming = (Get-SdHooksConf (Join-Path $tmp 'sd-export.conf')).Entries
+    } finally { Remove-Item -LiteralPath $tmp -Recurse -Force }
+
+    $conf = Get-SdHooksConf
+    $known = @($conf.Entries | ForEach-Object { "$($_.When) $($_.Target) $($_.Hook)" })
+    $lines = @((Test-Path -LiteralPath $conf.Path) ? $conf.Lines : $script:HooksHeader)
+    $added = @(); $skipped = 0
+    foreach ($e in $incoming) {
+        $key = "$($e.When) $($e.Target) $($e.Hook)"
+        if ($key -in $known) { $skipped++; continue }
+        $known += $key
+        $lines += 'off      {0}  {1}  {2}' -f $e.When.PadRight(6), $e.Target.PadRight(14), $e.Hook
+        $added += [pscustomobject]@{ N = $conf.Entries.Count + $added.Count + 1; When = $e.When; Target = $e.Target; Hook = $e.Hook }
+    }
+    if ($added) { Save-SdHooksConf $conf.Path $lines }
+    "imported $($rels.Count) file(s):"
+    $rels | ForEach-Object { "  $_" }
+    if ($added) {
+        'hook entries added (all off):'
+        $added | ForEach-Object { "  $($_.N)  $($_.When)  $($_.Target)  $($_.Hook)" }
+        'switch them on with:'
+        $added | ForEach-Object { "  $($script:Cfg.Name) --hooks on $($_.N)" }
+    }
+    if ($skipped) { "skipped $skipped hook entr$($skipped -eq 1 ? 'y' : 'ies') already in hooks.conf" }
+}
+
 # ---- Meta-commands (§10) ----------------------------------------------------------------------
 
 function Show-SdHelp {
@@ -485,7 +605,8 @@ function Invoke-SdMeta([string]$Command, [string[]]$Rest) {
         '--new'      { New-SdScript $Rest }
         '--which'    { Show-SdWhich (Resolve-SdEntry $Rest) }
         '--hooks'    { Invoke-SdHooksCommand $Rest }
-        { $_ -in '--export', '--import' } { Write-SdError 'not implemented yet' }
+        '--export'   { Export-SdFiles $Rest }
+        '--import'   { Import-SdFiles $Rest }
         default      { Write-SdError "unknown meta-command '$Command'"; Show-SdHelp }
     }
 }
