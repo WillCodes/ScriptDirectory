@@ -104,8 +104,9 @@ Only the first 10 lines are scanned. A bundle uses its script files, falling bac
 
 Press Tab after the command name.
 
-- **PowerShell:** setup binds Tab so that it opens a `MenuComplete` menu after `sd `, showing every entry with its description. Only the name is inserted, followed by a space, so you can keep pressing Tab (`sd de` → `sd dev ` → `sd dev sub `). The menu shows one entry per line, and picking a folder opens the next menu straight away (Esc stops). A folder with just one entry still shows it, with a `(stop here)` option, instead of filling it in. Elsewhere Tab does whatever it did before.
-- **bash:** several matches print the listing lines (shown, not inserted); a single match is inserted, except that a folder with just one entry is shown rather than filled in. The list is one entry per row, folders first, and shows on the first Tab: the completion turns on readline's `show-all-if-ambiguous`, which does that for every command in bash. Pressing Tab again on the same line doesn't print the list again, and filling in a folder lists its contents straight away (bash 4+; Tab is rebound only if it still has bash's default binding). bash has no selectable menu, so there are no arrow keys. Fuzzy and single-entry lists have one blank extra entry (see Known limitations).
+- **Tab after a space** shows what comes next. Tab in the middle of a word does nothing.
+- **PowerShell:** setup binds Tab so that it opens a `MenuComplete` menu after `sd `, showing every entry with its description. Only the name is inserted, followed by a space, so you can keep going (`sd ` → `sd dev ` → `sd dev sub `). The menu shows one entry per line, and picking a folder opens the next menu straight away (Esc stops). A folder with just one entry still shows it, with a `(stop here)` option, instead of filling it in. Elsewhere Tab does whatever it did before.
+- **bash:** Tab prints the listing lines (shown, not inserted), one entry per row, folders first, on the first Tab: the completion turns on readline's `show-all-if-ambiguous`, which does that for every command in bash. Pressing Tab again on the same line doesn't print the list again. bash has no selectable menu, so there are no arrow keys, and the list has one blank extra entry (see Known limitations).
 - **Matching:** names that start with what you typed. If there are none, names containing your letters in order (`bd` finds `build`), best match first.
 - **git-bash (Windows):** the same bash completion, set up by `install.ps1` in `~/.bashrc`. It's answered by the bash core in `bin/sd`, using the Windows rules (`.bat` first), so a Tab takes about 0.1 s.
 - **cmd:** none.
@@ -302,5 +303,5 @@ Setup warns about anything missing and installs nothing. `.sh` files with CRLF l
 - No tab completion in cmd, and no zsh completion yet (`sd --complete` is there to build it on).
 - The bash core has been tested under git-bash 5.2, but not yet on a real Linux or macOS, or on bash 3.2.
 - On macOS, login shells read `~/.bash_profile`, so make it source `~/.bashrc`.
-- With fuzzy matches, or a folder with one entry, the bash completion menu shows one blank extra entry. That stops readline from replacing the word you typed with the matches' common prefix.
+- The bash completion list shows one blank extra entry. It stops readline from typing the entries' common prefix (or a lone entry) into your line.
 - `.ps1` user scripts are never run.

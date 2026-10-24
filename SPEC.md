@@ -204,11 +204,12 @@ An empty `<partial>` matches everything. Order otherwise follows §7.
   So the menu shows every description, and only the name is inserted, ready for the next Tab: `sd de` → `sd dev ` → `sd dev sub `.
 - The menu lines are padded to half the window width, so the menu shows one entry per line. The description is drawn faint
   (readable on the highlighted entry too) and the highlight ends at the text; escape codes only with a real console.
-- Setup binds Tab to a handler that calls PSReadLine `MenuComplete` when the line starts with `<name> `, and the previous Tab function (default `TabCompleteNext`) otherwise.
+- Setup binds Tab to a handler that calls PSReadLine `MenuComplete` when the line starts with `<name> ` and the cursor follows
+  a space (Tab in the middle of a word does nothing), and the previous Tab function (default `TabCompleteNext`) otherwise.
   When a pick leaves the line in a namespace that has entries, the handler opens that namespace's menu straight away,
   so `sd <Tab>` can walk down the tree one pick at a time. Esc, typing, or reaching a script ends it.
 - A folder with a single entry still shows a menu when nothing has been typed: the completer adds a `(stop here)` entry
-  (`MenuComplete` would otherwise insert a lone match unseen). Picking it inserts nothing. A typed partial with one match is inserted directly.
+  (`MenuComplete` would otherwise insert a lone match unseen). Picking it inserts nothing.
 
 ### 8.4 bash
 
@@ -217,14 +218,9 @@ An empty `<partial>` matches everything. Order otherwise follows §7.
 - The completion file turns on readline's `show-all-if-ambiguous` in interactive shells, so the list shows on the first Tab.
   It is a readline setting, so it applies to every command.
 - Pressing Tab again on the same unchanged line (at the same prompt) prints nothing, instead of the list again.
-- Chaining (bash 4+, only if Tab still has its default `complete` binding): Tab is rebound to `complete` followed by
-  `possible-completions` when sd has just filled in a namespace, so its contents are listed straight away.
-  For anything else the extra step does nothing. The helper keys are under `\C-x%`.
-- Several candidates: `COMPREPLY` gets the display lines from §7 (shown, not inserted).
-- Exactly one candidate and a non-empty partial: `COMPREPLY` gets just the name, so it is inserted.
-  With an empty partial (a folder's contents) a single candidate is shown like several, as in §8.3.
-- A display line alone, or display lines that don't all start with the partial (fuzzy), get one blank extra entry,
-  so readline's longest-common-prefix insertion inserts nothing.
+- Only an empty word is completed (Tab after a space); Tab in the middle of a word does nothing.
+- The display lines are shown, never inserted: one blank extra entry makes readline's longest-common-prefix
+  insertion insert nothing, also for a folder with a single entry.
 
 ### 8.5 cmd
 
