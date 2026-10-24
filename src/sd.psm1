@@ -649,6 +649,9 @@ Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
             ForEach-Object { $_.Extent.Text.Trim('"', "'") })
         $items = @(Get-SdCandidates (@($words) + "$word"))
         $lines = @(Format-SdItems $items)
+        # MenuComplete fits as many columns as the widest entry allows; past half the window, that's one per line.
+        $half = try { [int]([Console]::BufferWidth / 2) } catch { 0 }
+        $lines = @($lines | ForEach-Object { $_.PadRight($half) })
         for ($i = 0; $i -lt $items.Count; $i++) {
             $type = $items[$i].Type -eq 'dir' ? 'ProviderContainer' : 'ParameterValue'
             [Management.Automation.CompletionResult]::new($items[$i].Name, $lines[$i], $type, ($items[$i].Desc ? $items[$i].Desc : $items[$i].Name))
