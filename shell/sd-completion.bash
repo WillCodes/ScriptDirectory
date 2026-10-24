@@ -50,4 +50,6 @@ _sd_complete() {
 }
 
 complete -F _sd_complete "$_sd_name"
+# List the matches on the first Tab, not the second. This is a readline setting, so it applies to every command.
+[[ $- == *i* ]] && bind 'set show-all-if-ambiguous on' 2>/dev/null
 unset _sd_name _sd_re _sd_line _sd_config

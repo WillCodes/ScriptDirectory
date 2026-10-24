@@ -212,6 +212,9 @@ An empty `<partial>` matches everything. Order otherwise follows §7.
 ### 8.4 bash
 
 - `complete -F _sd_complete <name>`.
+- Display lines are padded to half the screen width (one per row) and keep §7's order (`compopt -o nosort`, bash 4.4+).
+- The completion file turns on readline's `show-all-if-ambiguous` in interactive shells, so the list shows on the first Tab.
+  It is a readline setting, so it applies to every command.
 - Several candidates: `COMPREPLY` gets the display lines from §7 (shown, not inserted).
 - Exactly one candidate and a non-empty partial: `COMPREPLY` gets just the name, so it is inserted.
   With an empty partial (a folder's contents) a single candidate is shown like several, as in §8.3.
