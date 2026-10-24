@@ -138,7 +138,7 @@ function Get-SdItems([string]$Dir) {
 }
 
 function Format-SdItems($Items) {
-    $marker = @{ dir = ' '; script = '▸'; conflict = '!' }
+    $marker = @{ dir = ' '; script = '▸'; conflict = '!'; meta = ' ' }
     $label = { param($i) $i.Name + ($i.Type -eq 'dir' ? '/' : '') }
     $width = ($Items | ForEach-Object { (& $label $_).Length } | Measure-Object -Maximum).Maximum
     foreach ($i in $Items) { ('{0} {1} {2}' -f (& $label $i).PadRight($width), $marker[$i.Type], $i.Desc).TrimEnd() }
@@ -161,18 +161,24 @@ function Select-SdMatches($Items, [string]$Partial) {
     } | Sort-Object Start, Span, Name | ForEach-Object Item
 }
 
-# --complete [words...] <partial>
-function Invoke-SdComplete([string[]]$Rest) {
+# The candidates for <words...> <partial> (§8.1): meta-commands for a first word starting with --,
+# else the matches in the namespace the words reach. None once they reach a script or don't resolve.
+function Get-SdCandidates([string[]]$Rest) {
     $partial = $Rest.Count ? $Rest[-1] : ''
     $words = @($Rest | Select-Object -SkipLast 1)
     if ($words.Count -eq 0 -and $partial.StartsWith('--')) {
         $items = $script:Meta | Sort-Object { $_[0] } | ForEach-Object { [pscustomobject]@{ Name = $_[0]; Type = 'meta'; Desc = $_[2] } }
     } else {
         $r = Resolve-SdEntry $words
-        if ($r.Kind -ne 'namespace') { return }   # a script was reached, or the words are wrong
+        if ($r.Kind -ne 'namespace') { return }
         $items = Get-SdItems $r.Dir
     }
-    Select-SdMatches $items $partial | ForEach-Object { "$($_.Name)`t$($_.Type)`t$($_.Desc)" }
+    Select-SdMatches $items $partial
+}
+
+# --complete [words...] <partial>
+function Invoke-SdComplete([string[]]$Rest) {
+    Get-SdCandidates $Rest | ForEach-Object { "$($_.Name)`t$($_.Type)`t$($_.Desc)" }
 }
 
 # ---- Running (§11) ----------------------------------------------------------------------------
@@ -350,6 +356,41 @@ function Invoke-Sd {
         { $_ -in 'notfound', 'ambiguous' } { Write-SdResolveError $r }
         default     { Invoke-SdScript $r $r.Args }
     }
+}
+
+# ---- Shell integration (§8.3, §12) ------------------------------------------------------------
+
+$script:CmdName = (Get-SdConfig).Name
+Set-Item "Function:\global:$script:CmdName" { Invoke-Sd @args }
+
+# Menu entries show the §7 listing line; only the name is inserted. Never writes errors into the prompt.
+Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
+    param($word, $ast, $cursor)
+    try {
+        $ErrorActionPreference = 'Stop'
+        $script:Cfg = Get-SdConfig
+        $words = @($ast.CommandElements | Select-Object -Skip 1 | Where-Object { $_.Extent.EndOffset -lt $cursor } |
+            ForEach-Object { $_.Extent.Text.Trim('"', "'") })
+        $items = @(Get-SdCandidates (@($words) + "$word"))
+        $lines = @(Format-SdItems $items)
+        for ($i = 0; $i -lt $items.Count; $i++) {
+            $type = $items[$i].Type -eq 'dir' ? 'ProviderContainer' : 'ParameterValue'
+            [Management.Automation.CompletionResult]::new($items[$i].Name, $lines[$i], $type, ($items[$i].Desc ? $items[$i].Desc : $items[$i].Name))
+        }
+    } catch { }
+}
+
+# Tab opens the menu after "<name> ", and does whatever it did before everywhere else.
+if (Get-Module PSReadLine) {
+    $name = $script:CmdName
+    $prev = (Get-PSReadLineKeyHandler -Chord Tab).Function
+    if (-not [Microsoft.PowerShell.PSConsoleReadLine].GetMethod("$prev")) { $prev = 'TabCompleteNext' }
+    Set-PSReadLineKeyHandler -Key Tab -Description "$name menu completion" -ScriptBlock {
+        $line = $cursor = $null
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+        $fn = $line -match "^\s*$([regex]::Escape($name))\s" ? 'MenuComplete' : $prev
+        [Microsoft.PowerShell.PSConsoleReadLine]::$fn()
+    }.GetNewClosure()
 }
 
 Export-ModuleMember -Function Invoke-Sd

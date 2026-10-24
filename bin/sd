@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# sd: run scripts by path-like words. See SPEC.md.
+
+# The repo folder, found through symlinks (no GNU readlink -f: it is not on macOS).
+src=${BASH_SOURCE[0]}
+while [ -h "$src" ]; do
+    dir=$(cd -P "$(dirname "$src")" && pwd)
+    src=$(readlink "$src")
+    case $src in /*) ;; *) src=$dir/$src ;; esac
+done
+repo=$(cd -P "$(dirname "$src")/.." && pwd)
+
+# Git for Windows: the PowerShell core does the work (SD_BASH_CORE=1 forces the bash core, for tests).
+case $(uname -s) in
+    MINGW*|MSYS*)
+        if [ "${SD_BASH_CORE:-}" != 1 ]; then
+            exec pwsh -NoLogo -NoProfile -File "$repo/src/sd.ps1" "$@"
+        fi ;;
+esac
+
+echo "sd: the bash core is not implemented yet" >&2
+exit 1
