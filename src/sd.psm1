@@ -69,10 +69,10 @@ function Get-SdEntries([string]$Dir) {
     $entries.Values
 }
 
-# §5.1. Returns Kind = namespace (Name, Dir), bundle|loose (Name, File, Dir, Args, Entry),
-# or notfound|ambiguous (Error, and Dir for the listing).
-function Resolve-SdEntry([string[]]$Words) {
-    $dir = $script:Cfg.Root
+# §5.1, starting in $Base (default: the root). Returns Kind = namespace (Name, Dir),
+# bundle|loose (Name, File, Dir, Args, Entry), or notfound|ambiguous (Error, and Dir for the listing).
+function Resolve-SdEntry([string[]]$Words, [string]$Base) {
+    $dir = $Base ? $Base : $script:Cfg.Root
     $prefix = ''
     for ($i = 0; $i -lt $Words.Count; $i++) {
         $w = $Words[$i]
@@ -218,7 +218,6 @@ function Invoke-WithEnv([hashtable]$Vars, [scriptblock]$Body) {
 }
 
 # Runs one resolved script with $ScriptArgs. Leaves its exit code in $LASTEXITCODE.
-# Phase 5 wraps this with the before/after hooks.
 function Invoke-SdScript($Entry, [string[]]$ScriptArgs) {
     $file = $Entry.File.FullName
     $isCmd = $Entry.File.Extension -in '.bat', '.cmd'
@@ -234,6 +233,156 @@ function Invoke-SdScript($Entry, [string[]]$ScriptArgs) {
     $global:LASTEXITCODE = 0
     Invoke-WithEnv $vars {
         if ($isCmd) { & $file @ScriptArgs } else { & $bash.Path ($file -replace '\\', '/') @ScriptArgs }
+    }
+}
+
+# ---- Hooks (§9, §10.1) ------------------------------------------------------------------------
+
+$script:HooksHeader = '# sd hooks: state (on|off), when (before|after), target (script name or glob), hook (in hooks/)',
+                      '# state  when    target          hook'
+
+# hooks.conf (§9.2): the raw Lines, kept as they are, and the valid Entries (Line = index in Lines, N, State,
+# When, Target, Hook). A trailing "# comment" after the columns is allowed. Bad lines are warned about and skipped.
+function Get-SdHooksConf {
+    $path = Join-Path $script:Cfg.Root 'hooks.conf'
+    $lines = (Test-Path -LiteralPath $path) ? @(Get-Content -LiteralPath $path) : @()
+    $n = 0
+    $entries = @(for ($i = 0; $i -lt $lines.Count; $i++) {
+        $c = @(($lines[$i] -replace '(^|\s)#.*$').Trim() -split '\s+' | Where-Object { $_ })
+        if (-not $c) { continue }
+        $err = if ($c.Count -ne 4) { "expected 4 columns (state when target hook), found $($c.Count)" }
+            elseif ($c[0] -cnotin 'on', 'off') { "state must be on or off, not '$($c[0])'" }
+            elseif ($c[1] -cnotin 'before', 'after') { "when must be before or after, not '$($c[1])'" }
+        if ($err) { Write-SdWarning "hooks.conf line $($i + 1): $err"; continue }
+        $n++
+        [pscustomobject]@{ Line = $i; N = $n; State = $c[0]; When = $c[1]; Target = $c[2]; Hook = $c[3] }
+    })
+    [pscustomobject]@{ Path = $path; Lines = $lines; Entries = $entries }
+}
+
+function Save-SdHooksConf([string]$Path, [string[]]$Lines) {   # LF endings, the bash core reads it too
+    [IO.File]::WriteAllText($Path, (@($Lines | ForEach-Object { "$_`n" }) -join ''), [Text.UTF8Encoding]::new($false))
+}
+
+# `*` matches any characters, including `/`; everything else is literal. Case-insensitive.
+function Test-SdGlob([string]$Pattern, [string]$Name) {
+    $Name -match ('^' + ([regex]::Escape($Pattern) -replace '\\\*', '.*') + '$')
+}
+
+# The resolved hook script (Name = hooks/<hook>) or nothing.
+function Find-SdHook([string]$Hook) {
+    $dir = Join-Path $script:Cfg.Root 'hooks'
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return }
+    $r = Resolve-SdEntry ($Hook -split '/') $dir
+    if ($r.Kind -in 'bundle', 'loose') { $r.Name = "hooks/$($r.Name)"; $r }
+}
+
+# Runs the given entries of one phase in order (§9.3). Leaves $LASTEXITCODE = the exit code of the before hook
+# that failed (the rest is skipped), else 0. A failing after hook only warns.
+function Invoke-SdPhase($Hooks, [string]$Phase, $Entry, [string[]]$ScriptArgs, $ExitCode) {
+    $failed = 0
+    foreach ($h in $Hooks | Where-Object When -eq $Phase) {
+        $hook = Find-SdHook $h.Hook
+        if (-not $hook) { Write-SdWarning "hook '$($h.Hook)' not found (hooks.conf entry $($h.N))"; continue }
+        $vars = @{ SD_TARGET = $Entry.Name; SD_PHASE = $Phase; SD_NO_HOOKS = '1' }
+        if ($null -ne $ExitCode) { $vars.SD_EXIT_CODE = "$ExitCode" }
+        Invoke-WithEnv $vars { Invoke-SdScript $hook $ScriptArgs }
+        $code = $global:LASTEXITCODE
+        if (-not $code) { continue }
+        if ($Phase -eq 'after') { Write-SdWarning "hook '$($h.Hook)' (after $($Entry.Name)) failed with exit $code"; continue }
+        Write-SdError "hook '$($h.Hook)' (before $($Entry.Name)) failed with exit $code"
+        $failed = $code
+        break
+    }
+    $global:LASTEXITCODE = $failed
+}
+
+# §9.3: before hooks, the script, after hooks. The result is the script's exit code (or the failed hook's).
+function Invoke-SdWithHooks($Entry, [string[]]$ScriptArgs) {
+    $hooks = $env:SD_NO_HOOKS -eq '1' ? @() : @((Get-SdHooksConf).Entries |
+        Where-Object { $_.State -eq 'on' -and (Test-SdGlob $_.Target $Entry.Name) })
+    Invoke-SdPhase $hooks before $Entry $ScriptArgs
+    if ($global:LASTEXITCODE) { return }
+    Invoke-SdScript $Entry $ScriptArgs
+    $code = $global:LASTEXITCODE
+    Invoke-SdPhase $hooks after $Entry $ScriptArgs $code
+    $global:LASTEXITCODE = $code
+}
+
+# §10.3: every entry whose target matches $Name, on or off.
+function Show-SdWhichHooks([string]$Name) {
+    $found = @((Get-SdHooksConf).Entries | Where-Object { Test-SdGlob $_.Target $Name })
+    if (-not $found) { return 'hooks:       (none)' }
+    'hooks:'
+    $width = ($found.Hook | Measure-Object -Property Length -Maximum).Maximum
+    foreach ($e in $found) {
+        '  {0}  {1}   ({2} {3}){4}' -f $e.When.PadRight(6), $e.Hook.PadRight($width), "$($e.State),".PadRight(4), $e.N,
+            ((Find-SdHook $e.Hook) ? '' : ' missing')
+    }
+}
+
+# §10.1 list: n  state  when  target  hook
+function Show-SdHooks($Entries) {
+    if (-not $Entries) { return }
+    $nw = "$($Entries.Count)".Length
+    $tw = ($Entries.Target | Measure-Object -Property Length -Maximum).Maximum
+    foreach ($e in $Entries) {
+        '{0}  {1}  {2}  {3}  {4}{5}' -f "$($e.N)".PadLeft($nw), $e.State.PadRight(3), $e.When.PadRight(6),
+            $e.Target.PadRight($tw), $e.Hook, ((Find-SdHook $e.Hook) ? '' : '  (missing)')
+    }
+}
+
+# Names of all scripts under $Dir, without hooks/ (Get-SdEntries hides it at the root).
+function Get-SdScriptNames([string]$Dir, [string]$Prefix = '') {
+    foreach ($e in Get-SdEntries $Dir) {
+        if ($e.Kind -eq 'namespace') { Get-SdScriptNames $e.Path "$Prefix$($e.Name)/" } else { "$Prefix$($e.Name)" }
+    }
+}
+
+function Add-SdHook($Conf, [string[]]$Spec) {
+    if ($Spec.Count -ne 3 -or $Spec[0] -cnotin 'before', 'after' -or ($Spec | Where-Object { $_ -match '\s|^#' })) {
+        return Write-SdError 'usage: --hooks add <before|after> <target> <hook>'
+    }
+    $when, $target, $hook = $Spec
+    if (-not (Find-SdHook $hook)) { return Write-SdError "hook '$hook' not found in $($script:Cfg.Root)\hooks" }
+    if (-not (Get-SdScriptNames $script:Cfg.Root | Where-Object { Test-SdGlob $target $_ })) {
+        Write-SdWarning "target '$target' matches no script"
+    }
+    $lines = (Test-Path -LiteralPath $Conf.Path) ? $Conf.Lines : $script:HooksHeader   # columns as in the header
+    Save-SdHooksConf $Conf.Path (@($lines) + ('on       {0}  {1}  {2}' -f $when.PadRight(6), $target.PadRight(14), $hook))
+    "added entry $($Conf.Entries.Count + 1)"
+}
+
+# rm / on / off <n>: touches only that line.
+function Update-SdHook($Conf, [string]$Action, [string[]]$Spec) {
+    $n = $Spec.Count -eq 1 -and $Spec[0] -match '^\d+$' ? [int]$Spec[0] : 0
+    if ($n -lt 1 -or $n -gt $Conf.Entries.Count) {
+        return Write-SdError "no hook entry '$($Spec -join ' ')' (see --hooks); usage: --hooks $Action <n>"
+    }
+    $e = $Conf.Entries[$n - 1]
+    $lines = [Collections.Generic.List[string]]$Conf.Lines
+    if ($Action -eq 'rm') {
+        $lines.RemoveAt($e.Line)
+    } else {   # swap the state word, keeping the later columns where they are if there are spaces to absorb it
+        $m = [regex]::Match($lines[$e.Line], '^(\s*)(on|off)(\s+)')
+        $pad = [Math]::Max(1, $m.Groups[2].Length + $m.Groups[3].Length - $Action.Length)
+        $lines[$e.Line] = $m.Groups[1].Value + $Action + ' ' * $pad + $lines[$e.Line].Substring($m.Length)
+    }
+    Save-SdHooksConf $Conf.Path $lines
+}
+
+function Invoke-SdHooksCommand([string[]]$Rest) {
+    $conf = Get-SdHooksConf
+    $more = @($Rest | Select-Object -Skip 1)
+    switch ($Rest.Count ? $Rest[0] : '') {
+        ''     { Show-SdHooks $conf.Entries }
+        'add'  { Add-SdHook $conf $more }
+        'edit' {
+            if (-not (Test-Path -LiteralPath $conf.Path)) { Save-SdHooksConf $conf.Path $script:HooksHeader }
+            Open-SdEditor $conf.Path
+        }
+        { $_ -in 'rm', 'on', 'off' } { Update-SdHook $conf $_ $more }
+        default { Write-SdError 'usage: --hooks [add <before|after> <target> <hook> | rm <n> | on <n> | off <n> | edit]' }
     }
 }
 
@@ -267,7 +416,7 @@ function Show-SdWhich($R) {
     "runs with:   $runner"
     "description: $(Get-SdDescription $R.Entry)"
     "args:        $($R.Args -join ' ')"
-    # Phase 5: the "hooks:" section goes here.
+    Show-SdWhichHooks $R.Name
 }
 
 # The contents of templates\script.<ext> for a script called $Name. The .bat hands off to the .sh
@@ -279,6 +428,17 @@ function Get-SdTemplate([string]$Ext, [string]$Name, [bool]$HasSh) {
         $text = $text.Replace("`n", "`r`n")
     }
     $text
+}
+
+# Opens $Files in $VISUAL, else $EDITOR; with neither, prints the paths.
+function Open-SdEditor([string[]]$Files) {
+    $editor = $env:VISUAL ? $env:VISUAL : $env:EDITOR
+    if ($editor) {   # through cmd so that values like `code --wait` work
+        $quoted = ($Files | ForEach-Object { "`"$_`"" }) -join ' '
+        Start-Process cmd -ArgumentList "/c `"$editor $quoted`"" -Wait -NoNewWindow
+    } else {
+        $Files
+    }
 }
 
 function New-SdScript([string[]]$Rest) {
@@ -315,13 +475,7 @@ function New-SdScript([string[]]$Rest) {
         $ext = [IO.Path]::GetExtension($f)
         [IO.File]::WriteAllText($f, (Get-SdTemplate $ext (Split-Path $target -Leaf) $sh), $utf8)
     }
-    $editor = $env:VISUAL ? $env:VISUAL : $env:EDITOR
-    if ($editor) {   # through cmd so that values like `code --wait` work
-        $quoted = ($new | ForEach-Object { "`"$_`"" }) -join ' '
-        Start-Process cmd -ArgumentList "/c `"$editor $quoted`"" -Wait -NoNewWindow
-    } else {
-        $new
-    }
+    Open-SdEditor $new
 }
 
 function Invoke-SdMeta([string]$Command, [string[]]$Rest) {
@@ -330,7 +484,8 @@ function Invoke-SdMeta([string]$Command, [string[]]$Rest) {
         '--complete' { Invoke-SdComplete $Rest }
         '--new'      { New-SdScript $Rest }
         '--which'    { Show-SdWhich (Resolve-SdEntry $Rest) }
-        { $_ -in '--hooks', '--export', '--import' } { Write-SdError 'not implemented yet' }
+        '--hooks'    { Invoke-SdHooksCommand $Rest }
+        { $_ -in '--export', '--import' } { Write-SdError 'not implemented yet' }
         default      { Write-SdError "unknown meta-command '$Command'"; Show-SdHelp }
     }
 }
@@ -354,7 +509,7 @@ function Invoke-Sd {
     switch ($r.Kind) {
         'namespace' { Format-SdItems @(Get-SdItems $r.Dir) }
         { $_ -in 'notfound', 'ambiguous' } { Write-SdResolveError $r }
-        default     { Invoke-SdScript $r $r.Args }
+        default     { Invoke-SdWithHooks $r $r.Args }
     }
 }
 

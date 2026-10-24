@@ -14,7 +14,8 @@ repo=$(cd -P "$(dirname "$src")/.." && pwd)
 case $(uname -s) in
     MINGW*|MSYS*)
         if [ "${SD_BASH_CORE:-}" != 1 ]; then
-            exec pwsh -NoLogo -NoProfile -File "$repo/src/sd.ps1" "$@"
+            # A Windows path: under MSYS_NO_PATHCONV=1 (set by sd for .sh scripts) git-bash won't convert it.
+            exec pwsh -NoLogo -NoProfile -File "$(cygpath -w "$repo/src/sd.ps1")" "$@"
         fi ;;
 esac
 
