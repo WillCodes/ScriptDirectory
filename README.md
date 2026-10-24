@@ -107,6 +107,7 @@ Press Tab after the command name.
 - **PowerShell:** setup binds Tab so that it opens a `MenuComplete` menu after `sd `, showing every entry with its description. Only the name is inserted, followed by a space, so you can keep pressing Tab (`sd de` → `sd dev ` → `sd dev sub `). The menu shows one entry per line, and picking a folder opens the next menu straight away (Esc stops). A folder with just one entry still shows it, with a `(stop here)` option, instead of filling it in. Elsewhere Tab does whatever it did before.
 - **bash:** several matches print the listing lines (shown, not inserted); a single match is inserted, except that a folder with just one entry is shown rather than filled in. Fuzzy and single-entry lists have one blank extra entry (see Known limitations).
 - **Matching:** names that start with what you typed. If there are none, names containing your letters in order (`bd` finds `build`), best match first.
+- **git-bash (Windows):** the same bash completion, set up by `install.ps1` in `~/.bashrc`. Each Tab runs the PowerShell core, so it takes about half a second.
 - **cmd:** none.
 
 Completion is a thin wrapper around `sd --complete [words...] <partial>`, which prints `name<TAB>type<TAB>description` lines (type is `dir`, `script`, `conflict` or `meta`). That is the hook for adding another shell.
@@ -253,7 +254,7 @@ What setup touches:
 |---|---|---|
 | Entry points | `%LOCALAPPDATA%\sd\bin\<name>.cmd` and `<name>` (git-bash) | `~/.local/bin/<name>`, a symlink to `bin/sd` |
 | `PATH` | user `Path`, adds that folder | a line in `~/.bashrc` |
-| Profile | `$PROFILE.CurrentUserAllHosts` imports `src/sd.psm1` | `~/.bashrc` sources `shell/sd-completion.bash` |
+| Profile | `$PROFILE.CurrentUserAllHosts` imports `src/sd.psm1`; for git-bash, `~/.bashrc` sources `shell/sd-completion.bash` (and `~/.bash_profile` loads `~/.bashrc`, if you had no login file) | `~/.bashrc` sources `shell/sd-completion.bash` |
 
 Profile changes sit between `# >>> sd >>>` and `# <<< sd <<<` and are replaced, not duplicated.
 

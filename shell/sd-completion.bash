@@ -3,16 +3,19 @@
 
 _sd_name=sd
 _sd_re='^[[:space:]]*name[[:space:]]*=[[:space:]]*(.*[^[:space:]])'
-if [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/sd/config" ]; then
+_sd_config=${XDG_CONFIG_HOME:-$HOME/.config}/sd/config
+case $(uname -s) in MINGW*|MSYS*) [ -n "$APPDATA" ] && _sd_config=$(cygpath -u "$APPDATA")/sd/config ;; esac   # git-bash
+if [ -r "$_sd_config" ]; then
     while IFS= read -r _sd_line || [ -n "$_sd_line" ]; do
         [[ $_sd_line =~ $_sd_re ]] && _sd_name=${BASH_REMATCH[1]}
-    done < "${XDG_CONFIG_HOME:-$HOME/.config}/sd/config"
+    done < "$_sd_config"
 fi
 
 _sd_complete() {
     local cur=${COMP_WORDS[COMP_CWORD]} out n t d l i width=0 mark all=1
     local names=() lines=() types=() descs=()
     out=$("${COMP_WORDS[0]}" --complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" 2>/dev/null) || return 0
+    out=${out//$'\r'/}   # git-bash: the PowerShell core writes CRLF
     while IFS=$'\t' read -r n t d; do
         [ -n "$n" ] || continue
         names[${#names[@]}]=$n; types[${#types[@]}]=$t; descs[${#descs[@]}]=$d
@@ -37,4 +40,4 @@ _sd_complete() {
 }
 
 complete -F _sd_complete "$_sd_name"
-unset _sd_name _sd_re _sd_line
+unset _sd_name _sd_re _sd_line _sd_config

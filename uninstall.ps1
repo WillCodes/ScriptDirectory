@@ -38,13 +38,17 @@ if ($kept.Count -ne $entries.Count) {
     }
 }
 
-# Profile: drop the block; delete the file if nothing else is left in it.
-if (Test-Path -LiteralPath $profileFile) {
-    $text = [IO.File]::ReadAllText($profileFile)
-    $text = $text -replace '(?s)(?:\r?\n)?# >>> sd >>>.*?# <<< sd <<<\r?\n?', ''
-    if ($text.Trim()) { [IO.File]::WriteAllText($profileFile, $text, [Text.UTF8Encoding]::new($false)) } else { Remove-Item -LiteralPath $profileFile }
+# Profiles (PowerShell, and git-bash's ~/.bashrc / ~/.bash_profile): drop the block; delete a file left empty.
+$bashHome = $env:HOME ? $env:HOME : $env:USERPROFILE
+foreach ($file in $profileFile, (Join-Path $bashHome '.bashrc'), (Join-Path $bashHome '.bash_profile')) {
+    if (-not (Test-Path -LiteralPath $file)) { continue }
+    $text = [IO.File]::ReadAllText($file)
+    $pattern = '(?s)(?:\r?\n)?# >>> sd >>>.*?# <<< sd <<<\r?\n?'
+    if ($text -notmatch $pattern) { continue }
+    $text = $text -replace $pattern, ''
+    if ($text.Trim()) { [IO.File]::WriteAllText($file, $text, [Text.UTF8Encoding]::new($false)) } else { Remove-Item -LiteralPath $file }
 }
 
-Write-Host "Removed '$($cfg.name)' (entry points, PATH entry, profile block, machine config)."
+Write-Host "Removed '$($cfg.name)' (entry points, PATH entry, profile blocks, machine config)."
 Write-Host $(if ($cfg.root) { "Your sd root was NOT touched; your scripts are still in $($cfg.root)" } else { 'Your sd root, if you made one, was NOT touched.' })
 Write-Host 'Restart your shell for the change to take effect.'

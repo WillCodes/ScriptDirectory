@@ -436,6 +436,9 @@ Steps:
 6. **Add the bin folder to the user PATH** if missing. On Windows this is the user `Path` variable; on Unix, a line in the profile block.
 7. **Update the shell profile.**
    - Windows: `$PROFILE.CurrentUserAllHosts` (so every PowerShell host, e.g. VS Code's, gets it) imports the module, which defines the `<name>` function, completion and the Tab handler.
+     If Git for Windows bash is found, `~/.bashrc` also sources the bash completion for git-bash (it reads the name from
+     `%APPDATA%\sd\config` and strips the PowerShell core's CRLF), and a `~/.bash_profile` that loads `~/.bashrc` is
+     created if there is no login file (Git for Windows would otherwise make one, with a warning).
    - Unix: `~/.bashrc` sources the completion file.
 
    The added text sits between `# >>> sd >>>` and `# <<< sd <<<` and is replaced, not duplicated, on re-run.

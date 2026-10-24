@@ -112,20 +112,39 @@ if (-not ($userPath -split ';' | Where-Object { $_ -and (& $expand $_) -ieq (& $
 }
 if (-not ($env:PATH -split ';' | Where-Object { (& $expand $_) -ieq $bin })) { $env:PATH = "$bin;$env:PATH" }
 
-# ---- 8. Profile ---------------------------------------------------------------------------------
-$text = (Test-Path -LiteralPath $profileFile) ? [IO.File]::ReadAllText($profileFile) : ''
-$nl = ($text.Contains("`n") -and -not $text.Contains("`r`n")) ? "`n" : "`r`n"   # keep the file's own line endings
-$module = "$repo\src\sd.psm1".Replace("'", "''")
-$block = "# >>> sd >>>${nl}Import-Module '$module'${nl}# <<< sd <<<"
-$pattern = '(?s)# >>> sd >>>.*?# <<< sd <<<'
-if ($text -match $pattern) {
-    $text = [regex]::Replace($text, $pattern, { $block })
-} else {
-    if ($text -and -not $text.EndsWith("`n")) { $text += $nl }
-    if ($text) { $text += $nl }
-    $text += $block + $nl
+# ---- 8. Profiles --------------------------------------------------------------------------------
+# Inserts or replaces the block between "# >>> sd >>>" and "# <<< sd <<<" in $Path, keeping the rest.
+# $Nl is the line ending; with -KeepEndings a file that already has LF endings keeps them.
+function Set-SdBlock($Path, [string[]]$Lines, $Nl, [switch]$KeepEndings) {
+    $text = (Test-Path -LiteralPath $Path) ? [IO.File]::ReadAllText($Path) : ''
+    if ($KeepEndings -and $text.Contains("`n") -and -not $text.Contains("`r`n")) { $Nl = "`n" }
+    $block = (@('# >>> sd >>>') + $Lines + '# <<< sd <<<') -join $Nl
+    $pattern = '(?s)# >>> sd >>>.*?# <<< sd <<<'
+    if ($text -match $pattern) {
+        $text = [regex]::Replace($text, $pattern, { $block })
+    } else {
+        if ($text -and -not $text.EndsWith("`n")) { $text += $Nl }
+        if ($text) { $text += $Nl }
+        $text += $block + $Nl
+    }
+    Save $Path $text
 }
-Save $profileFile $text
+
+Set-SdBlock $profileFile "Import-Module '$("$repo\src\sd.psm1".Replace("'", "''"))'" "`r`n" -KeepEndings
+
+# git-bash: ~/.bashrc sources the bash completion (LF, or bash chokes). Git for Windows only reads ~/.bashrc through
+# a login file, and creates one with a warning if there is none, so a missing ~/.bash_profile is made here instead.
+$bashrc = $null
+if (& $m { Get-SdBash }) {
+    $bashHome = $env:HOME ? $env:HOME : $env:USERPROFILE
+    $bashrc = Join-Path $bashHome '.bashrc'
+    $posix = "$repo\shell\sd-completion.bash" -replace '\\', '/'
+    $posix = ('/' + $posix.Substring(0, 1).ToLower() + $posix.Substring(2)).Replace("'", "'\''")   # D:/x -> /d/x
+    Set-SdBlock $bashrc "[ -f '$posix' ] && source '$posix'" "`n"
+    if (-not (@('.bash_profile', '.bash_login', '.profile' | ForEach-Object { Test-Path -LiteralPath (Join-Path $bashHome $_) }) -contains $true)) {
+        Set-SdBlock (Join-Path $bashHome '.bash_profile') 'test -f ~/.bashrc && . ~/.bashrc' "`n"
+    }
+}
 
 # ---- 9. Summary ---------------------------------------------------------------------------------
 Write-Host @"
@@ -137,5 +156,6 @@ sd is set up.
   bin:      $bin
   profile:  $profileFile
 "@
+if ($bashrc) { Write-Host "  bash:     $bashrc (completion in git-bash)" }
 if ($warnings) { Write-Host "Warnings:"; $warnings | ForEach-Object { Write-Host "  - $_" } }
 Write-Host "Restart your shell to use ``$Name``."
