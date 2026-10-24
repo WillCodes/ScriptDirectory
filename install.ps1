@@ -158,7 +158,7 @@ if (& $m { Get-SdBash }) {
 # ---- 9. Summary ---------------------------------------------------------------------------------
 Write-Host @"
 
-sd is set up.
+sd is ready
   root:     $Root
   hooks:    $Root\hooks
   name:     $Name
