@@ -104,7 +104,7 @@ Only the first 10 lines are scanned. A bundle uses its script files, falling bac
 
 Press Tab after the command name.
 
-- **PowerShell:** setup binds Tab so that it opens a `MenuComplete` menu after `sd `, showing every entry with its description. Only the name is inserted, followed by a space, so you can keep pressing Tab (`sd de` → `sd dev ` → `sd dev sub `). The menu shows one entry per line, and picking a folder opens the next menu straight away (Esc stops). Elsewhere Tab does whatever it did before.
+- **PowerShell:** setup binds Tab so that it opens a `MenuComplete` menu after `sd `, showing every entry with its description. Only the name is inserted, followed by a space, so you can keep pressing Tab (`sd de` → `sd dev ` → `sd dev sub `). The menu shows one entry per line, and picking a folder opens the next menu straight away (Esc stops). A folder with just one entry still shows it, with a `(stop here)` option, instead of filling it in. Elsewhere Tab does whatever it did before.
 - **bash:** several matches print the listing lines (shown, not inserted); a single match is inserted. If any match is fuzzy, the menu has one blank extra entry (see Known limitations).
 - **Matching:** names that start with what you typed. If there are none, names containing your letters in order (`bd` finds `build`), best match first.
 - **cmd:** none.

@@ -658,6 +658,11 @@ Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
             [Management.Automation.CompletionResult]::new("$($items[$i].Name) ", $lines[$i], 'ParameterValue',
                 ($items[$i].Desc ? $items[$i].Desc : $items[$i].Name))
         }
+        # MenuComplete inserts a lone match without showing it. When a folder's contents are being shown (nothing
+        # typed yet), a second entry keeps the menu up; picking it inserts a space, which the Tab handler takes back.
+        if ($items.Count -eq 1 -and -not $word) {
+            [Management.Automation.CompletionResult]::new(' ', '(stop here)'.PadRight($half), 'ParameterValue', 'Insert nothing')
+        }
     } catch { }
 }
 
@@ -684,7 +689,11 @@ if (Get-Module PSReadLine) {
             $before = $line
             [Microsoft.PowerShell.PSConsoleReadLine]::MenuComplete()
             [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
-            $next = $line -ne $before -and $cursor -eq $line.Length -and $line.EndsWith(' ')
+            if ($line.TrimEnd() -eq $before.TrimEnd()) {   # Esc, or "(stop here)", whose space is removed again
+                if ($line.Length -gt $before.Length) { [Microsoft.PowerShell.PSConsoleReadLine]::Delete($before.Length, $line.Length - $before.Length) }
+                break
+            }
+            $next = $cursor -eq $line.Length -and $line.EndsWith(' ')
             if (-not ($next -and (Test-SdNextMenu $line))) { break }
         }
     }

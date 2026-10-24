@@ -206,6 +206,8 @@ An empty `<partial>` matches everything. Order otherwise follows §7.
 - Setup binds Tab to a handler that calls PSReadLine `MenuComplete` when the line starts with `<name> `, and the previous Tab function (default `TabCompleteNext`) otherwise.
   When a pick leaves the line in a namespace that has entries, the handler opens that namespace's menu straight away,
   so `sd <Tab>` can walk down the tree one pick at a time. Esc, typing, or reaching a script ends it.
+- A folder with a single entry still shows a menu when nothing has been typed: the completer adds a `(stop here)` entry
+  (`MenuComplete` would otherwise insert a lone match unseen). Picking it inserts nothing. A typed partial with one match is inserted directly.
 
 ### 8.4 bash
 
