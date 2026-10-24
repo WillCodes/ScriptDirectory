@@ -14,13 +14,19 @@ sd_repo() {
     REPO=$(cd -P "$(dirname "$src")/.." && pwd)
 }
 
-# Git for Windows: the PowerShell core does the work (SD_BASH_CORE=1 forces the bash core, for tests).
-case $(uname -s) in
-    MINGW*|MSYS*)
+# Git for Windows: the PowerShell core does the work, except for --complete, which is answered here with the
+# Windows rules (no PowerShell start-up per Tab). SD_BASH_CORE=1 forces the bash core with the Unix rules, for tests.
+WINDOWS=
+case $OSTYPE in
+    msys*|cygwin*)
         if [ "${SD_BASH_CORE:-}" != 1 ]; then
-            sd_repo
-            # A Windows path: under MSYS_NO_PATHCONV=1 (set by sd for .sh scripts) git-bash won't convert it.
-            exec pwsh -NoLogo -NoProfile -File "$(cygpath -w "$REPO/src/sd.ps1")" "$@"
+            if [ "${1:-}" = --complete ]; then
+                WINDOWS=1
+            else
+                sd_repo
+                # A Windows path: under MSYS_NO_PATHCONV=1 (set by sd for .sh scripts) git-bash won't convert it.
+                exec pwsh -NoLogo -NoProfile -File "$(cygpath -w "$REPO/src/sd.ps1")" "$@"
+            fi
         fi ;;
 esac
 
@@ -29,6 +35,7 @@ shopt -u patsub_replacement 2>/dev/null   # bash 5.2: a "&" in a ${x//a/b} repla
 STATUS=0                                  # the exit code, left by sd_error and sd_with_hooks
 nl=$'\n'; tab=$'\t'
 EXTS=(.sh "")                             # runnable extensions in priority order (§5.2); "" = extensionless
+[ -n "$WINDOWS" ] && EXTS=(.bat .cmd .sh "")
 ALL_EXTS=(.bat .cmd .sh "")               # --new and --export look at every platform's files
 
 # Meta-commands: name, usage, description. (--complete is hidden.)
@@ -56,10 +63,17 @@ sd_key() {
 
 sd_abs() { case $1 in /*) ABS=$1 ;; *) ABS=$PWD/$1 ;; esac; }
 
-# §3.1: ${XDG_CONFIG_HOME:-~/.config}/sd/config, then SD_ROOT on top.
+# POSIX = $1 as a git-bash path: C:\x or C:/x -> /c/x (no cygpath: it would cost a process per Tab).
+sd_posix() {
+    POSIX=${1//\\//}
+    if [[ $POSIX == [A-Za-z]:* ]]; then sd_key "${POSIX:0:1}"; POSIX=/$KEY${POSIX:2}; fi
+}
+
+# §3.1: ${XDG_CONFIG_HOME:-~/.config}/sd/config (Windows: %APPDATA%\sd\config), then SD_ROOT on top.
 sd_config() {
     local line file=${XDG_CONFIG_HOME:-$HOME/.config}/sd/config
     local re='^[[:space:]]*(root|name)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$'
+    if [ -n "$WINDOWS" ]; then sd_posix "${APPDATA:-}"; file=$POSIX/sd/config; fi
     ROOT=$HOME/sd CMD=sd
     if [ -f "$file" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
@@ -69,6 +83,7 @@ sd_config() {
         done < "$file"
     fi
     [ -n "${SD_ROOT:-}" ] && ROOT=$SD_ROOT
+    if [ -n "$WINDOWS" ]; then sd_posix "$ROOT"; ROOT=$POSIX; fi
     case $ROOT in "~") ROOT=$HOME ;; "~/"*) ROOT=$HOME/${ROOT#"~/"} ;; /*) ;; *) ROOT=$PWD/$ROOT ;; esac
     while [[ $ROOT == */ && $ROOT != / ]]; do ROOT=${ROOT%/}; done
 }
@@ -164,12 +179,19 @@ sd_resolve_error() {
 # ---- Descriptions and listing (§6, §7) --------------------------------------------------------
 
 # DESC = the text of the first comment line among the first 10 lines of <file>, a shebang on line 1 skipped.
+# A .bat/.cmd (only seen with the Windows rules) uses its first "::" or "REM " line.
 sd_file_description() {
     local line i=0
     DESC=
     while [ $i -lt 10 ] && { IFS= read -r line || [ -n "$line" ]; }; do
         sd_trim "$line"
-        if [[ $TRIM == '#'* ]] && ! { [ $i -eq 0 ] && [[ $TRIM == '#!'* ]]; }; then
+        if [[ $1 == *.[bB][aA][tT] || $1 == *.[cC][mM][dD] ]]; then
+            if [[ $TRIM == '::'* || $TRIM == [rR][eE][mM]' '* ]]; then
+                [[ $TRIM == '::'* ]] && TRIM=${TRIM#::} || TRIM=${TRIM:4}
+                sd_trim "$TRIM"; DESC=$TRIM
+                return
+            fi
+        elif [[ $TRIM == '#'* ]] && ! { [ $i -eq 0 ] && [[ $TRIM == '#!'* ]]; }; then
             sd_trim "${TRIM#?}"; DESC=$TRIM
             return
         fi

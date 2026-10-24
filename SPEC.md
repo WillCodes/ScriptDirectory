@@ -410,6 +410,7 @@ sd --import team.tar.gz [--force]
 | `SD_DIR` | Folder holding the running file. |
 
 **Nested calls:** scripts can call `sd` again. On Windows this works from PowerShell, cmd (`.bat` scripts) and git-bash (`.sh` scripts). Every route ends at the PowerShell core, so the Windows priority (§5.2) always applies.
+The one exception is `--complete` under git-bash: `bin/sd` answers it itself, with the Windows rules (§5.2, §6), so that a Tab doesn't start PowerShell.
 
 **Argument caveat (Windows):** cmd parses arguments to `.bat` again, so `%`, `^`, `&`, `!` and `"` inside arguments may not reach the `.bat` code unchanged. This is cmd behaviour, documented rather than worked around.
 
@@ -437,7 +438,7 @@ Steps:
 7. **Update the shell profile.**
    - Windows: `$PROFILE.CurrentUserAllHosts` (so every PowerShell host, e.g. VS Code's, gets it) imports the module, which defines the `<name>` function, completion and the Tab handler.
      If Git for Windows bash is found, `~/.bashrc` also sources the bash completion for git-bash (it reads the name from
-     `%APPDATA%\sd\config` and strips the PowerShell core's CRLF), and a `~/.bash_profile` that loads `~/.bashrc` is
+     `%APPDATA%\sd\config` and calls `bin/sd --complete`, see §11), and a `~/.bash_profile` that loads `~/.bashrc` is
      created if there is no login file (Git for Windows would otherwise make one, with a warning).
    - Unix: `~/.bashrc` sources the completion file.
 

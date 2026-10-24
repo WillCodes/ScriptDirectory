@@ -107,7 +107,7 @@ Press Tab after the command name.
 - **PowerShell:** setup binds Tab so that it opens a `MenuComplete` menu after `sd `, showing every entry with its description. Only the name is inserted, followed by a space, so you can keep pressing Tab (`sd de` → `sd dev ` → `sd dev sub `). The menu shows one entry per line, and picking a folder opens the next menu straight away (Esc stops). A folder with just one entry still shows it, with a `(stop here)` option, instead of filling it in. Elsewhere Tab does whatever it did before.
 - **bash:** several matches print the listing lines (shown, not inserted); a single match is inserted, except that a folder with just one entry is shown rather than filled in. Fuzzy and single-entry lists have one blank extra entry (see Known limitations).
 - **Matching:** names that start with what you typed. If there are none, names containing your letters in order (`bd` finds `build`), best match first.
-- **git-bash (Windows):** the same bash completion, set up by `install.ps1` in `~/.bashrc`. Each Tab runs the PowerShell core, so it takes about half a second.
+- **git-bash (Windows):** the same bash completion, set up by `install.ps1` in `~/.bashrc`. It's answered by the bash core in `bin/sd`, using the Windows rules (`.bat` first), so a Tab takes about 0.1 s.
 - **cmd:** none.
 
 Completion is a thin wrapper around `sd --complete [words...] <partial>`, which prints `name<TAB>type<TAB>description` lines (type is `dir`, `script`, `conflict` or `meta`). That is the hook for adding another shell.
@@ -284,7 +284,7 @@ pwsh -NoProfile -File tests/run.ps1     # PowerShell core
 bash tests/run.sh                       # bash core
 ```
 
-Both run the same [tests/cases.txt](tests/cases.txt) against a temporary copy of [tests/root](tests/root), so the two cores stay in step. Under git-bash, `bin/sd` hands over to the PowerShell core; set `SD_BASH_CORE=1` to force the bash core (`tests/run.sh` does).
+Both run the same [tests/cases.txt](tests/cases.txt) against a temporary copy of [tests/root](tests/root), so the two cores stay in step. Under git-bash, `bin/sd` hands over to the PowerShell core (except `--complete`, which it answers itself with the Windows rules); set `SD_BASH_CORE=1` to force the bash core (`tests/run.sh` does).
 
 ## Requirements
 

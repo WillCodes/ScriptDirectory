@@ -1,10 +1,12 @@
 # bash completion for sd (SPEC §8.4). Sourced from ~/.bashrc by install.sh; bash 3.2 compatible.
-# Thin wrapper around `<name> --complete`; the command name comes from the machine config (§3.1).
+# Thin wrapper around `bin/sd --complete`, called directly: under git-bash that answers in bash too, with the
+# Windows rules, instead of starting PowerShell per Tab. The command name comes from the machine config (§3.1).
 
+_SD_BIN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/sd
 _sd_name=sd
 _sd_re='^[[:space:]]*name[[:space:]]*=[[:space:]]*(.*[^[:space:]])'
 _sd_config=${XDG_CONFIG_HOME:-$HOME/.config}/sd/config
-case $(uname -s) in MINGW*|MSYS*) [ -n "$APPDATA" ] && _sd_config=$(cygpath -u "$APPDATA")/sd/config ;; esac   # git-bash
+case $OSTYPE in msys*|cygwin*) [ -n "$APPDATA" ] && _sd_config=$(cygpath -u "$APPDATA")/sd/config ;; esac   # git-bash
 if [ -r "$_sd_config" ]; then
     while IFS= read -r _sd_line || [ -n "$_sd_line" ]; do
         [[ $_sd_line =~ $_sd_re ]] && _sd_name=${BASH_REMATCH[1]}
@@ -14,8 +16,8 @@ fi
 _sd_complete() {
     local cur=${COMP_WORDS[COMP_CWORD]} out n t d l i width=0 mark all=1
     local names=() lines=() types=() descs=()
-    out=$("${COMP_WORDS[0]}" --complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" 2>/dev/null) || return 0
-    out=${out//$'\r'/}   # git-bash: the PowerShell core writes CRLF
+    out=$("$_SD_BIN" --complete "${COMP_WORDS[@]:1:COMP_CWORD-1}" "$cur" 2>/dev/null) || return 0
+    out=${out//$'\r'/}   # in case a CRLF .help or script line slips through
     while IFS=$'\t' read -r n t d; do
         [ -n "$n" ] || continue
         names[${#names[@]}]=$n; types[${#types[@]}]=$t; descs[${#descs[@]}]=$d
