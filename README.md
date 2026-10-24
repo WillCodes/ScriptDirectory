@@ -105,7 +105,7 @@ Only the first 10 lines are scanned. A bundle uses its script files, falling bac
 Press Tab after the command name.
 
 - **PowerShell:** setup binds Tab so that it opens a `MenuComplete` menu after `sd `, showing every entry with its description. Only the name is inserted, followed by a space, so you can keep pressing Tab (`sd de` → `sd dev ` → `sd dev sub `). The menu shows one entry per line, and picking a folder opens the next menu straight away (Esc stops). A folder with just one entry still shows it, with a `(stop here)` option, instead of filling it in. Elsewhere Tab does whatever it did before.
-- **bash:** several matches print the listing lines (shown, not inserted); a single match is inserted. If any match is fuzzy, the menu has one blank extra entry (see Known limitations).
+- **bash:** several matches print the listing lines (shown, not inserted); a single match is inserted, except that a folder with just one entry is shown rather than filled in. Fuzzy and single-entry lists have one blank extra entry (see Known limitations).
 - **Matching:** names that start with what you typed. If there are none, names containing your letters in order (`bd` finds `build`), best match first.
 - **cmd:** none.
 
@@ -301,5 +301,5 @@ Setup warns about anything missing and installs nothing. `.sh` files with CRLF l
 - No tab completion in cmd, and no zsh completion yet (`sd --complete` is there to build it on).
 - The bash core has been tested under git-bash 5.2, but not yet on a real Linux or macOS, or on bash 3.2.
 - On macOS, login shells read `~/.bash_profile`, so make it source `~/.bashrc`.
-- With fuzzy matches, the bash completion menu shows one blank extra entry. That stops readline from replacing the word you typed with the matches' common prefix.
+- With fuzzy matches, or a folder with one entry, the bash completion menu shows one blank extra entry. That stops readline from replacing the word you typed with the matches' common prefix.
 - `.ps1` user scripts are never run.

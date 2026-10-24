@@ -21,7 +21,8 @@ _sd_complete() {
         lines[${#lines[@]}]=$n
     done <<< "$out"
     COMPREPLY=()
-    if [ ${#names[@]} -eq 1 ]; then COMPREPLY=("${names[0]}"); return 0; fi
+    # A lone match is inserted, unless nothing was typed: then it's a folder's contents, shown like any other.
+    if [ ${#names[@]} -eq 1 ] && [ -n "$cur" ]; then COMPREPLY=("${names[0]}"); return 0; fi
     for i in "${!names[@]}"; do   # §7 display lines: padded name, marker, description
         case ${types[i]} in script) mark=▸;; conflict) mark='!';; *) mark=' ';; esac
         printf -v l '%-*s %s %s' "$width" "${lines[i]}" "$mark" "${descs[i]}"
@@ -31,7 +32,8 @@ _sd_complete() {
     # Readline replaces the typed word with the longest common prefix of COMPREPLY. Fuzzy (and
     # differently-cased) matches don't start with the typed word, so that prefix could shorten or
     # change it. A blank extra entry makes the prefix empty, which readline treats as "insert nothing".
-    [ $all = 1 ] || COMPREPLY[${#COMPREPLY[@]}]=' '
+    # A single display line needs it too, or readline would insert that line.
+    if [ ${#COMPREPLY[@]} -eq 1 ] || [ $all = 0 ]; then COMPREPLY[${#COMPREPLY[@]}]=' '; fi
 }
 
 complete -F _sd_complete "$_sd_name"

@@ -213,7 +213,10 @@ An empty `<partial>` matches everything. Order otherwise follows §7.
 
 - `complete -F _sd_complete <name>`.
 - Several candidates: `COMPREPLY` gets the display lines from §7 (shown, not inserted).
-- Exactly one candidate: `COMPREPLY` gets just the name, so it is inserted.
+- Exactly one candidate and a non-empty partial: `COMPREPLY` gets just the name, so it is inserted.
+  With an empty partial (a folder's contents) a single candidate is shown like several, as in §8.3.
+- A display line alone, or display lines that don't all start with the partial (fuzzy), get one blank extra entry,
+  so readline's longest-common-prefix insertion inserts nothing.
 
 ### 8.5 cmd
 
