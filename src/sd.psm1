@@ -648,10 +648,12 @@ Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
         $words = @($ast.CommandElements | Select-Object -Skip 1 | Where-Object { $_.Extent.EndOffset -lt $cursor } |
             ForEach-Object { $_.Extent.Text.Trim('"', "'") })
         $items = @(Get-SdCandidates (@($words) + "$word"))
-        $lines = @(Format-SdItems $items)
         # MenuComplete fits as many columns as the widest entry allows; past half the window, that's one per line.
+        # It highlights the whole column, so a colour reset before the padding ends the highlight at the text
+        # (PSReadLine counts escape codes as zero width). Only with a real console.
         $half = try { [int]([Console]::BufferWidth / 2) } catch { 0 }
-        $lines = @($lines | ForEach-Object { $_.PadRight($half) })
+        $pad = { param($t) $half ? $t + "`e[0m" + ' ' * [Math]::Max(0, $half - $t.Length) : $t }
+        $lines = @(Format-SdItems $items | ForEach-Object { & $pad $_ })
         # "name " so that Tab can go straight on to the next word. Always ParameterValue: PSReadLine appends
         # a path separator to a ProviderContainer, which would make a namespace "dev\".
         for ($i = 0; $i -lt $items.Count; $i++) {
@@ -661,7 +663,7 @@ Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
         # MenuComplete inserts a lone match without showing it. When a folder's contents are being shown (nothing
         # typed yet), a second entry keeps the menu up; picking it inserts a space, which the Tab handler takes back.
         if ($items.Count -eq 1 -and -not $word) {
-            [Management.Automation.CompletionResult]::new(' ', '(stop here)'.PadRight($half), 'ParameterValue', 'Insert nothing')
+            [Management.Automation.CompletionResult]::new(' ', (& $pad '(stop here)'), 'ParameterValue', 'Insert nothing')
         }
     } catch { }
 }
