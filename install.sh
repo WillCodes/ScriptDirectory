@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sets up sd on Linux/macOS: sd root, machine config, entry point, PATH and ~/.bashrc (SPEC §12).
+# Sets up sd on Linux/macOS: sd root, machine config, entry point, PATH and ~/.bashrc.
 # Safe to re-run; re-run with a new --name to rename the command. bash 3.2 compatible.
 #   ./install.sh [--root <path>] [--name <name>]
 repo=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -77,7 +77,7 @@ if [ ! -d "$Root" ] || [ -z "$(ls -A "$Root")" ]; then
     sed 's/TODO: describe this script/Example script: prints its arguments/' "$repo/templates/script.sh" > "$Root/hello.sh"
     chmod +x "$Root/hello.sh"
 fi
-# Hook scripts and hooks.conf live in hooks/ (§9). Any root gets them: new files overwrite nothing.
+# Hook scripts and hooks.conf live in hooks/. Any root gets them: new files overwrite nothing.
 [ -d "$Root/hooks" ] || mkdir "$Root/hooks" || die "cannot create '$Root/hooks'"
 if [ -f "$Root/hooks.conf" ] && [ ! -e "$Root/hooks/hooks.conf" ]; then   # where it used to be
     mv "$Root/hooks.conf" "$Root/hooks/hooks.conf" || die "cannot move '$Root/hooks.conf' into hooks/"

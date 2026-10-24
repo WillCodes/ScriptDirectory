@@ -1,5 +1,5 @@
 #Requires -Version 7
-# Sets up sd on Windows: sd root, machine config, entry points, user PATH and PowerShell profile (SPEC §12).
+# Sets up sd on Windows: sd root, machine config, entry points, user PATH and PowerShell profile.
 # Safe to re-run; re-run with a new -Name to rename the command.
 #   pwsh ./install.ps1 [-Root <path>] [-Name <name>]
 param([string]$Root, [string]$Name)
@@ -83,7 +83,7 @@ if (-not (Test-Path -LiteralPath $Root) -or -not (Get-ChildItem -LiteralPath $Ro
     Save "$Root\hello.sh" (& $describe (& $m { Get-SdTemplate '.sh' 'hello' $true }))
     Save "$Root\hello.bat" (& $describe (& $m { Get-SdTemplate '.bat' 'hello' $true }))
 }
-# Hook scripts and hooks.conf live in hooks\ (§9). Any root gets them: new files overwrite nothing.
+# Hook scripts and hooks.conf live in hooks\. Any root gets them: new files overwrite nothing.
 if (-not (Test-Path -LiteralPath "$Root\hooks" -PathType Container)) { $null = New-Item -ItemType Directory -Path "$Root\hooks" }
 if ((Test-Path -LiteralPath "$Root\hooks.conf" -PathType Leaf) -and -not (Test-Path -LiteralPath "$Root\hooks\hooks.conf")) {
     Move-Item -LiteralPath "$Root\hooks.conf" "$Root\hooks\hooks.conf"   # where it used to be

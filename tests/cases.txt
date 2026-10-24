@@ -1,4 +1,4 @@
-# Shared test cases for the sd cores (see PLAN.md, phase 1).
+# Shared test cases for the sd cores.
 #
 # platform | exit | command | expected
 #
@@ -10,12 +10,12 @@
 #
 # Cases run in file order on ONE shared copy of tests/root, so cases that change files
 # (--new, --hooks add/rm/on/off, --import) affect the cases after them.
-# Listing lines follow SPEC 7: name padded to the longest name, then " " + marker + " " + description.
+# Listing lines: name padded to the longest name, then " " + marker + " " + description.
 
 # --- Resolution, priority, arguments ---------------------------------------------------------
 all  | 0 | hello a b             | hello.sh: a b
 all  | 0 | noext x               | noext: x
-# both.bat + both.sh: .bat wins on Windows, .sh on Unix (SPEC 5.2)
+# both.bat + both.sh: .bat wins on Windows, .sh on Unix
 win  | 0 | both x                | both.bat: x
 unix | 0 | both x                | both.sh: x
 # winonly.bat exists only for Windows
@@ -37,7 +37,7 @@ all  | 0 | dev build dev          | build.sh: dev
 all  | 0 | dev sub deep q         | deep.sh: q
 all  | 0 | dev deploy "" x        | deploy.sh:  x
 
-# --- Listings (SPEC 7) -------------------------------------------------------------------------
+# --- Listings ----------------------------------------------------------------------------------
 # root: namespaces first, descriptions from .help and from the script files
 all  | 0 |                        | dev/      Development tools\nhooked/
 all  | 0 |                        | hello   ▸ Say hello\nnoext   ▸ Extensionless script
@@ -53,7 +53,7 @@ all  | 0 |                        | !hooks
 all  | 0 | dev                    | sub/     Nested namespace\nbuild  ▸ Build the project\ndeploy ▸ Push to staging
 all  | 0 | dev                    | !helper
 
-# --- Completion (SPEC 8) -------------------------------------------------------------------------
+# --- Completion ----------------------------------------------------------------------------------
 all  | 0 | --complete dev b       | build\tscript\tBuild the project
 all  | 0 | --complete dev ""      | sub\tdir\tNested namespace\nbuild\tscript\tBuild the project\ndeploy\tscript\tPush to staging
 # case-insensitive prefix
@@ -67,7 +67,7 @@ all  | 0 | --complete dev build x | !\t
 # meta-commands
 all  | 0 | --complete --h        | --hooks
 
-# --- Hooks at run time (SPEC 9.3); hooks.conf as shipped ----------------------------------------
+# --- Hooks at run time; hooks.conf as shipped ----------------------------------------------------
 # before hook (entry 1) -> script -> after hook (entry 2); entry 5 names a missing hook: warning only
 all  | 0 | hooked ok a            | pass hook: before hooked/ok a\nok.sh: a\nafter hook: hooked/ok exit=0
 all  | 0 | hooked ok b            | missing
@@ -80,7 +80,7 @@ all  | 3 | hooked fails z         | fails.sh: z\nafter hook: hooked/fails exit=3
 # scripts outside hooked/ fire nothing (entry 4 is OFF; written in lower case, which still reads)
 all  | 0 | hello c               | !hook
 
-# --- --which (SPEC 10.3) -------------------------------------------------------------------------
+# --- --which -------------------------------------------------------------------------------------
 all  | 0 | --which dev build 1 2  | name:        dev/build\nkind:        bundle
 win  | 0 | --which dev build 1 2  | build.bat\nruns with:   cmd\ndescription: Build the project\nargs:        1 2
 unix | 0 | --which dev build 1 2  | build.sh\nruns with:
@@ -89,7 +89,7 @@ all  | 0 | --which hooked ok a     | BEFORE  pass      (ON,  1)\n  AFTER   after
 all  | 0 | --which hooked ok a     | !pass hook:
 all  | 0 | --which hooked ok a     | !ok.sh: a
 
-# --- --new (SPEC 10.2) -----------------------------------------------------------------------------
+# --- --new -----------------------------------------------------------------------------------------
 all  | 0 | --new tmp/made --sh    | made.sh
 all  | 0 | tmp made x             | args: x
 # default files: Windows .bat + .sh (bat hands off to sh), Unix .sh
@@ -101,7 +101,7 @@ all  | 0 | tmp bun z              | args: z
 # dev/build is a bundle, so a loose dev/build would be a conflict
 all  | 1 | --new dev/build        |
 
-# --- --hooks (SPEC 10.1), numbered list, add, on/off/rm ------------------------------------
+# --- --hooks: numbered list, add, on/off/rm ------------------------------------
 # list columns: n, state (3), when (6), target (padded to the longest target), hook
 all  | 0 | --hooks               | 1  ON   BEFORE  hooked/*
 all  | 0 | --hooks               | 4  OFF  BEFORE  *
@@ -119,7 +119,7 @@ all  | 0 | dev deploy now        | !pass hook:
 all  | 0 | --hooks ON 6          |
 all  | 1 | --hooks rm 99         |
 
-# --- Export / import round trip (SPEC 10.4, 10.5) ---------------------------------------------------
+# --- Export / import round trip ---------------------------------------------------------------------
 # State: hooks.conf has entry 6 (after dev/deploy pass), switched on. out.tar.gz is written in the
 # runner's working directory.
 # by default no hooks go along: no entries, no hook scripts

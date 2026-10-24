@@ -1,6 +1,6 @@
-# bash completion for sd (SPEC §8.4). Sourced from ~/.bashrc by install.sh; bash 3.2 compatible.
+# bash completion for sd. Sourced from ~/.bashrc by install.sh; bash 3.2 compatible.
 # Thin wrapper around `bin/sd --complete`, called directly: under git-bash that answers in bash too, with the
-# Windows rules, instead of starting PowerShell per Tab. The command name comes from the machine config (§3.1).
+# Windows rules, instead of starting PowerShell per Tab. The command name comes from the machine config.
 
 _SD_BIN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/sd
 _sd_name=sd
@@ -45,7 +45,7 @@ _sd_complete() {
         compopt -o nosort 2>/dev/null
     fi
     half=$(( ${COLUMNS:-80} / 2 ))
-    for i in "${!names[@]}"; do   # §7 display lines: padded name, marker, description
+    for i in "${!names[@]}"; do   # display lines: padded name, marker, description
         case ${types[i]} in script) mark=▸;; conflict) mark='!';; *) mark=' ';; esac
         printf -v l '%-*s %s %s' "$width" "${lines[i]}" "$mark" "${descs[i]}"
         l=${l%"${l##*[![:space:]]}"}

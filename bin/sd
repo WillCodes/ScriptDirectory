@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sd: run scripts by path-like words. See SPEC.md; section numbers (§n) refer to it.
+# sd: run scripts by path-like words.
 # Same structure as src/sd.psm1 (the PowerShell core), written for bash 3.2: no associative arrays,
 # mapfile, ${x,,}, negative indices. Functions pass results in globals (R_*, E_*, I_*, FILES, DESC, ...).
 
@@ -34,7 +34,7 @@ shopt -s nullglob                         # an empty folder globs to nothing
 shopt -u patsub_replacement 2>/dev/null   # bash 5.2: a "&" in a ${x//a/b} replacement would be special
 STATUS=0                                  # the exit code, left by sd_error and sd_with_hooks
 nl=$'\n'; tab=$'\t'
-EXTS=(.sh "")                             # runnable extensions in priority order (§5.2); "" = extensionless
+EXTS=(.sh "")                             # runnable extensions in priority order; "" = extensionless
 [ -n "$WINDOWS" ] && EXTS=(.bat .cmd .sh "")
 ALL_EXTS=(.bat .cmd .sh "")               # --new and --export look at every platform's files
 
@@ -69,7 +69,7 @@ sd_posix() {
     if [[ $POSIX == [A-Za-z]:* ]]; then sd_key "${POSIX:0:1}"; POSIX=/$KEY${POSIX:2}; fi
 }
 
-# §3.1: ${XDG_CONFIG_HOME:-~/.config}/sd/config (Windows: %APPDATA%\sd\config), then SD_ROOT on top.
+# The machine config: ${XDG_CONFIG_HOME:-~/.config}/sd/config (Windows: %APPDATA%\sd\config), then SD_ROOT on top.
 sd_config() {
     local line file=${XDG_CONFIG_HOME:-$HOME/.config}/sd/config
     local re='^[[:space:]]*(root|name)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$'
@@ -88,7 +88,7 @@ sd_config() {
     while [[ $ROOT == */ && $ROOT != / ]]; do ROOT=${ROOT%/}; done
 }
 
-# ---- Entries: what a folder contains (§5) -----------------------------------------------------
+# ---- Entries: what a folder contains ----------------------------------------------------------
 
 # sd_files <folder> <name>: FILES = the runnable files called <name> in <folder>, best extension first.
 sd_files() {
@@ -141,7 +141,7 @@ sd_entries() {
     done
 }
 
-# §5.1, starting in <folder>: sd_resolve <folder> <word>...
+# Resolution, starting in <folder>: sd_resolve <folder> <word>...
 # R_KIND is namespace (R_NAME, R_DIR), bundle|loose (R_NAME, R_FILE, R_DIR, R_ARGS, and R_LEAF R_HOME R_FOLDER
 # for descriptions), or notfound|ambiguous (R_ERR, and R_DIR for the listing).
 sd_resolve() {
@@ -170,13 +170,13 @@ sd_resolve() {
     R_KIND=namespace R_NAME=${prefix%/} R_DIR=$dir
 }
 
-# §5.1 step 4 (and §5.4): the error, plus the listing of the folder for a word that wasn't found.
+# The error, plus the listing of the folder for a word that wasn't found.
 sd_resolve_error() {
     sd_error "$R_ERR"
     if [ "$R_KIND" = notfound ]; then sd_items "$R_DIR"; sd_format_items; fi
 }
 
-# ---- Descriptions and listing (§6, §7) --------------------------------------------------------
+# ---- Descriptions and listing -----------------------------------------------------------------
 
 # DESC = the text of the first comment line among the first 10 lines of <file>, a shebang on line 1 skipped.
 # A .bat/.cmd (only seen with the Windows rules) uses its first "::" or "REM " line.
@@ -260,7 +260,7 @@ sd_items() {
     sd_sort_items
 }
 
-# Prints the I_* items as listing lines (§7).
+# Prints the I_* items as listing lines.
 sd_format_items() {
     local i mark width=0 line pad
     local -a label=()
@@ -277,7 +277,7 @@ sd_format_items() {
     done
 }
 
-# ---- Completion (§8) --------------------------------------------------------------------------
+# ---- Completion -------------------------------------------------------------------------------
 
 # Keeps the I_* items that match <partial>: the prefix matches if there are any, else the subsequence
 # matches ranked by first match, then span, then name.
@@ -308,7 +308,7 @@ sd_select_matches() {
     sd_reorder
 }
 
-# sd_candidates <word>... <partial>: the I_* items for §8.1: meta-commands for a first word starting
+# sd_candidates <word>... <partial>: the I_* items to complete: meta-commands for a first word starting
 # with --, else the matches in the namespace the words reach. None once they reach a script or don't resolve.
 sd_candidates() {
     local partial= i
@@ -332,7 +332,7 @@ sd_complete() {
     for i in "${!I_NAME[@]}"; do printf '%s\t%s\t%s\n' "${I_NAME[i]}" "${I_TYPE[i]}" "${I_DESC[i]}"; done
 }
 
-# ---- Running (§11) ----------------------------------------------------------------------------
+# ---- Running ----------------------------------------------------------------------------------
 
 # sd_run <name> <file> <dir> [args...]: runs one script; its exit code is the status.
 sd_run() {
@@ -349,12 +349,12 @@ sd_run() {
     fi
 }
 
-# ---- Hooks (§9, §10.1) ------------------------------------------------------------------------
+# ---- Hooks ------------------------------------------------------------------------------------
 
 HOOKS_HEADER=('# sd hooks: state (ON|OFF), when (BEFORE|AFTER), target (script name or glob), hook (in this folder)'
               '# state  when    target          hook')
 
-# sd_hooks_conf [file]: hooks.conf (§9.2, or <file>). HC_PATH; HC_LINES, the raw lines, kept as they are;
+# sd_hooks_conf [file]: hooks.conf (or <file>). HC_PATH; HC_LINES, the raw lines, kept as they are;
 # H_LINE (index in HC_LINES), H_STATE, H_WHEN, H_TARGET, H_HOOK for the valid entries (entry n is index n-1).
 # A trailing "# comment" after the columns is allowed. Bad lines are warned about and skipped.
 sd_hooks_conf() {
@@ -427,7 +427,7 @@ sd_find_hook() {
 }
 
 # sd_phase <phase> <target> <exit code or ""> <args>...: runs the hooks of SEL (indices of hooks.conf entries)
-# that belong to this phase in order (§9.3). Status: the exit code of the before hook that failed (the rest
+# that belong to this phase in order. Status: the exit code of the before hook that failed (the rest
 # is skipped), else 0. A failing after hook only warns.
 sd_phase() {
     local phase=$1 target=$2 code=$3 i rc when=BEFORE
@@ -454,7 +454,7 @@ sd_phase() {
     return 0
 }
 
-# §9.3: sd_with_hooks <name> <file> <dir> <args>...: before hooks, the script, after hooks.
+# sd_with_hooks <name> <file> <dir> <args>...: before hooks, the script, after hooks.
 # STATUS is the script's exit code (or the failed hook's).
 sd_with_hooks() {
     local name=$1 i code
@@ -472,7 +472,7 @@ sd_with_hooks() {
     STATUS=$code
 }
 
-# §10.3: every entry whose target matches <name>, on or off.
+# --which: every entry whose target matches <name>, on or off.
 sd_show_which_hooks() {
     local i width=0 w h s
     local -a found=()
@@ -491,7 +491,7 @@ sd_show_which_hooks() {
     done
 }
 
-# §10.1: HELP = what --hooks add takes, with an example. The target is named from the root, the hook from hooks/.
+# HELP = what --hooks add takes, with an example. The target is named from the root, the hook from hooks/.
 sd_hooks_add_help() {
     HELP="usage: --hooks add <BEFORE|AFTER> <target> <hook>
   <target>  a script, named from the sd root as you run it (dev/build), or a glob (dev/*)
@@ -500,7 +500,7 @@ example: $CMD --hooks add BEFORE dev/build lint
   runs hooks/lint before every '$CMD dev build'"
 }
 
-# §10.1 list: n  state  when  target  hook
+# --hooks list: n  state  when  target  hook
 sd_show_hooks() {
     local i nw=${#H_HOOK[@]} tw=0 s w t miss
     if [ $nw -eq 0 ]; then sd_hooks_add_help; printf 'no hooks yet.\n%s\n' "$HELP"; return 0; fi
@@ -591,7 +591,7 @@ sd_hooks_command() {
     esac
 }
 
-# ---- Export / import (§10.4, §10.5) -----------------------------------------------------------
+# ---- Export / import --------------------------------------------------------------------------
 
 sd_mktemp() {   # WORK = a new temp folder, removed on exit
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/sd.XXXXXX") || return 1
@@ -690,7 +690,7 @@ sd_export() {
     fi
 }
 
-# §10.5 step 1: every name relative and inside the root, every entry a plain file or folder.
+# Import check: every name relative and inside the root, every entry a plain file or folder.
 # PROBLEM = what is wrong, status 1 if anything.
 sd_test_archive() {
     local names line has_conf=0 has_hooks=0
@@ -766,7 +766,7 @@ sd_import() {
     fi
 }
 
-# ---- Meta-commands (§10) ----------------------------------------------------------------------
+# ---- Meta-commands ----------------------------------------------------------------------------
 
 sd_help() {
     local i n u
@@ -858,7 +858,7 @@ sd_new() {
     [ $sh = 1 ] && new+=("$target.sh")
     [ $bat = 1 ] && new+=("$target.bat")
 
-    # Existing target files, or an entry that would make the name ambiguous (§5.4).
+    # Existing target files, or an entry that would make the name ambiguous.
     EXTS=("${ALL_EXTS[@]}")
     for f in "${new[@]}"; do [ -e "$f" ] && clashes+=("$f"); done
     if [ $bundle = 1 ]; then

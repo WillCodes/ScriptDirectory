@@ -1,4 +1,4 @@
-# sd
+# Script Directory
 
 A small script-directory runner for Windows and Unix. Put scripts in a folder tree, then run them by path-like words:
 
@@ -8,7 +8,7 @@ sd dev build 1 2      # runs <root>/dev/build with the arguments "1 2"
 
 You get a listing of what is there, tab completion with descriptions, optional before/after hooks, and export/import for sharing scripts. It is a single PowerShell module plus a single bash script. The whole thing is meant to be read in one sitting.
 
-Inspired by [ianthehenry/sd](https://github.com/ianthehenry/sd). It is a different, much smaller tool: only the meta-commands listed below exist. The full rules are in [SPEC.md](SPEC.md).
+Inspired by [ianthehenry/sd](https://github.com/ianthehenry/sd). It is a different, much smaller tool: only the meta-commands listed below exist.
 
 - **Windows:** `.bat` scripts run natively, `.sh` scripts run through Git for Windows' bash. Works from PowerShell, cmd and git-bash.
 - **Unix:** `.sh` and extensionless scripts, bash completion.

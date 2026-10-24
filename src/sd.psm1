@@ -1,7 +1,7 @@
-# sd: run scripts by path-like words. See SPEC.md; section numbers (§n) refer to it.
+# sd: run scripts by path-like words.
 # Runs inside the user's shell, so it never calls `exit`: the result is left in $global:LASTEXITCODE.
 
-# Runnable extensions in priority order (§5.2). '' = extensionless.
+# Runnable extensions in priority order. '' = extensionless.
 $script:Exts = '.bat', '.cmd', '.sh', ''
 
 # Meta-commands: name, usage, description. (--complete is hidden.)
@@ -25,7 +25,7 @@ function Write-SdWarning([string]$Message) {
     [Console]::Error.WriteLine("$($script:Cfg.Name): warning: $Message")
 }
 
-# §3.1: %APPDATA%\sd\config, then SD_ROOT on top.
+# The machine config: %APPDATA%\sd\config, then SD_ROOT on top.
 function Get-SdConfig {
     $cfg = @{ Root = Join-Path $HOME 'sd'; Name = 'sd' }
     $file = Join-Path $env:APPDATA 'sd\config'
@@ -39,7 +39,7 @@ function Get-SdConfig {
     $cfg
 }
 
-# ---- Entries: what a folder contains (§5) -----------------------------------------------------
+# ---- Entries: what a folder contains ----------------------------------------------------------
 
 # The runnable files called $Name among $Files, best extension first.
 function Select-SdFiles($Files, [string]$Name) {
@@ -69,7 +69,7 @@ function Get-SdEntries([string]$Dir) {
     $entries.Values
 }
 
-# §5.1, starting in $Base (default: the root). Returns Kind = namespace (Name, Dir),
+# Resolution, starting in $Base (default: the root). Returns Kind = namespace (Name, Dir),
 # bundle|loose (Name, File, Dir, Args, Entry), or notfound|ambiguous (Error, and Dir for the listing).
 function Resolve-SdEntry([string[]]$Words, [string]$Base) {
     $dir = $Base ? $Base : $script:Cfg.Root
@@ -97,13 +97,13 @@ function Resolve-SdEntry([string[]]$Words, [string]$Base) {
     [pscustomobject]@{ Kind = 'namespace'; Name = $prefix.TrimEnd('/'); Dir = $dir }
 }
 
-# §5.1 step 4 (and §5.4): the error, plus the listing of the folder for a word that wasn't found.
+# The error, plus the listing of the folder for a word that wasn't found.
 function Write-SdResolveError($R) {
     Write-SdError $R.Error
     if ($R.Kind -eq 'notfound') { Format-SdItems @(Get-SdItems $R.Dir) }
 }
 
-# ---- Descriptions and listing (§6, §7) --------------------------------------------------------
+# ---- Descriptions and listing -----------------------------------------------------------------
 
 function Get-SdFileDescription($File) {
     $lines = @(Get-Content -LiteralPath $File.FullName -TotalCount 10)
@@ -144,7 +144,7 @@ function Format-SdItems($Items) {
     foreach ($i in $Items) { ('{0} {1} {2}' -f (& $label $i).PadRight($width), $marker[$i.Type], $i.Desc).TrimEnd() }
 }
 
-# ---- Completion (§8) --------------------------------------------------------------------------
+# ---- Completion -------------------------------------------------------------------------------
 
 # Prefix matches if there are any, else subsequence matches ranked by first match, then span, then name.
 function Select-SdMatches($Items, [string]$Partial) {
@@ -161,7 +161,7 @@ function Select-SdMatches($Items, [string]$Partial) {
     } | Sort-Object Start, Span, Name | ForEach-Object Item
 }
 
-# The candidates for <words...> <partial> (§8.1): meta-commands for a first word starting with --,
+# The candidates for <words...> <partial>: meta-commands for a first word starting with --,
 # else the matches in the namespace the words reach. None once they reach a script or don't resolve.
 function Get-SdCandidates([string[]]$Rest) {
     $partial = $Rest.Count ? $Rest[-1] : ''
@@ -181,7 +181,7 @@ function Invoke-SdComplete([string[]]$Rest) {
     Get-SdCandidates $Rest | ForEach-Object { "$($_.Name)`t$($_.Type)`t$($_.Desc)" }
 }
 
-# ---- Running (§11) ----------------------------------------------------------------------------
+# ---- Running ----------------------------------------------------------------------------------
 
 # bash for .sh scripts: the one on PATH, unless that is WSL; else the bash of the Git for Windows
 # that git.exe belongs to. ViaGit means its folder must be put on PATH while scripts run.
@@ -236,12 +236,12 @@ function Invoke-SdScript($Entry, [string[]]$ScriptArgs) {
     }
 }
 
-# ---- Hooks (§9, §10.1) ------------------------------------------------------------------------
+# ---- Hooks ------------------------------------------------------------------------------------
 
 $script:HooksHeader = '# sd hooks: state (ON|OFF), when (BEFORE|AFTER), target (script name or glob), hook (in this folder)',
                       '# state  when    target          hook'
 
-# hooks.conf (§9.2, or the file $File): the raw Lines, kept as they are, and the valid Entries (Line = index in Lines, N, State,
+# hooks.conf (or the file $File): the raw Lines, kept as they are, and the valid Entries (Line = index in Lines, N, State,
 # When, Target, Hook). A trailing "# comment" after the columns is allowed. Bad lines are warned about and skipped.
 function Get-SdHooksConf([string]$File) {
     $path = $File ? $File : (Join-Path $script:Cfg.Root 'hooks\hooks.conf')
@@ -282,7 +282,7 @@ function Find-SdHook([string]$Hook) {
     if ($r.Kind -in 'bundle', 'loose') { $r.Name = "hooks/$($r.Name)"; $r }
 }
 
-# Runs the given entries of one phase in order (§9.3). Leaves $LASTEXITCODE = the exit code of the before hook
+# Runs the given entries of one phase in order. Leaves $LASTEXITCODE = the exit code of the before hook
 # that failed (the rest is skipped), else 0. A failing after hook only warns.
 function Invoke-SdPhase($Hooks, [string]$Phase, $Entry, [string[]]$ScriptArgs, $ExitCode) {
     $failed = 0
@@ -302,7 +302,7 @@ function Invoke-SdPhase($Hooks, [string]$Phase, $Entry, [string[]]$ScriptArgs, $
     $global:LASTEXITCODE = $failed
 }
 
-# §9.3: before hooks, the script, after hooks. The result is the script's exit code (or the failed hook's).
+# Before hooks, the script, after hooks. The result is the script's exit code (or the failed hook's).
 function Invoke-SdWithHooks($Entry, [string[]]$ScriptArgs) {
     $hooks = $env:SD_NO_HOOKS -eq '1' ? @() : @((Get-SdHooksConf).Entries |
         Where-Object { $_.State -eq 'ON' -and (Test-SdGlob $_.Target $Entry.Name) })
@@ -314,7 +314,7 @@ function Invoke-SdWithHooks($Entry, [string[]]$ScriptArgs) {
     $global:LASTEXITCODE = $code
 }
 
-# §10.3: every entry whose target matches $Name, on or off.
+# --which: every entry whose target matches $Name, on or off.
 function Show-SdWhichHooks([string]$Name) {
     $found = @((Get-SdHooksConf).Entries | Where-Object { Test-SdGlob $_.Target $Name })
     if (-not $found) { return 'hooks:       (none)' }
@@ -326,7 +326,7 @@ function Show-SdWhichHooks([string]$Name) {
     }
 }
 
-# §10.1: what --hooks add takes, with an example. The target is named from the root, the hook from hooks/.
+# What --hooks add takes, with an example. The target is named from the root, the hook from hooks/.
 function Get-SdHooksAddHelp {
     $name = $script:Cfg.Name
     "usage: --hooks add <BEFORE|AFTER> <target> <hook>",
@@ -336,7 +336,7 @@ function Get-SdHooksAddHelp {
     "  runs hooks/lint before every '$name dev build'" -join "`n"
 }
 
-# §10.1 list: n  state  when  target  hook
+# --hooks list: n  state  when  target  hook
 function Show-SdHooks($Entries) {
     if (-not $Entries) { return "no hooks yet.`n$(Get-SdHooksAddHelp)" }
     $nw = "$($Entries.Count)".Length
@@ -405,7 +405,7 @@ function Invoke-SdHooksCommand([string[]]$Rest) {
     }
 }
 
-# ---- Export / import (§10.4, §10.5) -----------------------------------------------------------
+# ---- Export / import --------------------------------------------------------------------------
 
 # Windows' own tar (bsdtar): under git-bash, `tar` on PATH is GNU tar, which reads C:\... as a remote host:path.
 $script:Tar = Join-Path $env:SystemRoot 'System32\tar.exe'
@@ -464,7 +464,7 @@ function Export-SdFiles([string[]]$Rest) {
     if ($picked) { 'hook entries:'; $picked | ForEach-Object { "  $($_.State)  $($_.When)  $($_.Target)  $($_.Hook)" } }
 }
 
-# §10.5 step 1: every name relative and inside the root, every entry a plain file or folder. Returns the problem.
+# Import check: every name relative and inside the root, every entry a plain file or folder. Returns the problem.
 function Test-SdArchive([string]$File) {
     $names = @(& $script:Tar -tzf $File 2>&1)
     if ($LASTEXITCODE) { return "cannot read $File as a tar.gz archive: $names" }
@@ -529,7 +529,7 @@ function Import-SdFiles([string[]]$Rest) {
     if ($skipped) { "skipped $skipped hook entr$($skipped -eq 1 ? 'y' : 'ies') already in hooks.conf" }
 }
 
-# ---- Meta-commands (§10) ----------------------------------------------------------------------
+# ---- Meta-commands ----------------------------------------------------------------------------
 
 function Show-SdHelp {
     $name = $script:Cfg.Name
@@ -600,7 +600,7 @@ function New-SdScript([string[]]$Rest) {
     $target = $flags -contains '--bundle' ? (Join-Path $loc $base) : $loc   # path without extension
     $new = @(if ($sh) { "$target.sh" }; if ($bat) { "$target.bat" })
 
-    # Existing target files, or an entry that would make the name ambiguous (§5.4).
+    # Existing target files, or an entry that would make the name ambiguous.
     $clashes = @($new | Where-Object { Test-Path -LiteralPath $_ })
     if ($flags -contains '--bundle') {
         $parent = Split-Path $loc
@@ -657,12 +657,12 @@ function Invoke-Sd {
     }
 }
 
-# ---- Shell integration (§8.3, §12) ------------------------------------------------------------
+# ---- Shell integration ------------------------------------------------------------------------
 
 $script:CmdName = (Get-SdConfig).Name
 Set-Item "Function:\global:$script:CmdName" { Invoke-Sd @args }
 
-# Menu entries show the §7 listing line; only the name (and a space) is inserted. Never writes errors into the prompt.
+# Menu entries show the listing line; only the name (and a space) is inserted. Never writes errors into the prompt.
 Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
     param($word, $ast, $cursor)
     try {
