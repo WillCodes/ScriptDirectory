@@ -67,7 +67,7 @@ name = sd
 | Key | Meaning | Takes effect |
 |---|---|---|
 | `root` | Path to the sd root. | Immediately (read on every run). |
-| `name` | The command name. | After re-running setup, which regenerates the entry points (§12). |
+| `name` | The command name. | The PowerShell function and bash completion: in new shells. The entry points (`.cmd`, git-bash, `~/.local/bin` link): after re-running setup, which regenerates them (§12). |
 
 The environment variable `SD_ROOT`, if set, overrides `root`.
 
@@ -353,6 +353,7 @@ hooks:
   before  log-start   (off, 3)
 ```
 
+A hook line ends with ` missing` if its hook doesn't exist; with no matching entries the section is `hooks:       (none)`.
 For a namespace it prints the namespace path and its listing. Exit 0 if resolved, otherwise it follows §5.1 step 4.
 
 ### 10.4 `--export`
@@ -373,7 +374,7 @@ sd --export team.tar.gz dev/build dev/deploy tools hooks/lint
 sd --import team.tar.gz [--force]
 ```
 
-1. Unpack into a temporary folder. Reject the archive if any entry has an absolute path, `..`, or a link.
+1. Unpack into a temporary folder. Reject the archive if any entry has an absolute path, `..`, or a link, if it has no `sd-export.conf`, or if it contains a root-level `hooks.conf` (entries only arrive through `sd-export.conf`). These checks run before anything is unpacked.
 2. Check for files that already exist in the root. If there are any and `--force` isn't given, list them and exit 1 without changing anything.
 3. Copy the files into the root.
 4. Add the `sd-export.conf` entries to the end of `hooks.conf` **as `off`**. An entry that matches an existing one on when + target + hook is skipped.
