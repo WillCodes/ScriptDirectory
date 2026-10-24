@@ -650,10 +650,17 @@ Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
         $items = @(Get-SdCandidates (@($words) + "$word"))
         # MenuComplete fits as many columns as the widest entry allows; past half the window, that's one per line.
         # It highlights the whole column, so a colour reset before the padding ends the highlight at the text
-        # (PSReadLine counts escape codes as zero width). Only with a real console.
+        # (PSReadLine counts escape codes as zero width). The description is faint: unlike a colour, that reads on
+        # the highlighted (reverse-video) entry too. Escape codes only with a real console.
         $half = try { [int]([Console]::BufferWidth / 2) } catch { 0 }
-        $pad = { param($t) $half ? $t + "`e[0m" + ' ' * [Math]::Max(0, $half - $t.Length) : $t }
-        $lines = @(Format-SdItems $items | ForEach-Object { & $pad $_ })
+        $pad = { param($t, $desc)
+            if (-not $half) { return $t }
+            $fill = ' ' * [Math]::Max(0, $half - $t.Length)
+            if ($desc) { $t = $t.Substring(0, $t.Length - $desc.Length) + "`e[2m$desc" }
+            "$t`e[0m$fill"
+        }
+        $plain = @(Format-SdItems $items)
+        $lines = @(for ($i = 0; $i -lt $items.Count; $i++) { & $pad $plain[$i] $items[$i].Desc })
         # "name " so that Tab can go straight on to the next word. Always ParameterValue: PSReadLine appends
         # a path separator to a ProviderContainer, which would make a namespace "dev\".
         for ($i = 0; $i -lt $items.Count; $i++) {
@@ -663,7 +670,7 @@ Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
         # MenuComplete inserts a lone match without showing it. When a folder's contents are being shown (nothing
         # typed yet), a second entry keeps the menu up; picking it inserts a space, which the Tab handler takes back.
         if ($items.Count -eq 1 -and -not $word) {
-            [Management.Automation.CompletionResult]::new(' ', (& $pad '(stop here)'), 'ParameterValue', 'Insert nothing')
+            [Management.Automation.CompletionResult]::new(' ', (& $pad '(stop here)' '(stop here)'), 'ParameterValue', 'Insert nothing')
         }
     } catch { }
 }

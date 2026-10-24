@@ -202,7 +202,8 @@ An empty `<partial>` matches everything. Order otherwise follows §7.
 - Each `CompletionResult` has `CompletionText` = the name followed by a space, `ListItemText` = the line from §7 (e.g. `build  ▸ Build the project`),
   and type `ParameterValue` (a `ProviderContainer` would make PSReadLine append a path separator).
   So the menu shows every description, and only the name is inserted, ready for the next Tab: `sd de` → `sd dev ` → `sd dev sub `.
-- The menu lines are padded to half the window width, so the menu shows one entry per line.
+- The menu lines are padded to half the window width, so the menu shows one entry per line. The description is drawn faint
+  (readable on the highlighted entry too) and the highlight ends at the text; escape codes only with a real console.
 - Setup binds Tab to a handler that calls PSReadLine `MenuComplete` when the line starts with `<name> `, and the previous Tab function (default `TabCompleteNext`) otherwise.
   When a pick leaves the line in a namespace that has entries, the handler opens that namespace's menu straight away,
   so `sd <Tab>` can walk down the tree one pick at a time. Esc, typing, or reaching a script ends it.
