@@ -185,7 +185,7 @@ Otherwise it prints the candidates in the namespace reached that match `<partial
 <name>\t<type>\t<description>
 ```
 
-`<type>` is `dir`, `script` or `conflict`. Each shell's completion code is a thin wrapper around this command.
+`<type>` is `dir`, `script`, `conflict`, or `meta` for meta-commands. Each shell's completion code is a thin wrapper around this command.
 When the first word is partial and starts with `--`, the candidates are the meta-commands.
 
 ### 8.2 Matching
