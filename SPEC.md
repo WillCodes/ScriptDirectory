@@ -203,7 +203,9 @@ An empty `<partial>` matches everything. Order otherwise follows §7.
   and type `ParameterValue` (a `ProviderContainer` would make PSReadLine append a path separator).
   So the menu shows every description, and only the name is inserted, ready for the next Tab: `sd de` → `sd dev ` → `sd dev sub `.
 - The menu lines are padded to half the window width, so the menu shows one entry per line.
-- Setup binds Tab to a handler that calls PSReadLine `MenuComplete` when the line starts with `<name> `, and `TabCompleteNext` (the default) otherwise.
+- Setup binds Tab to a handler that calls PSReadLine `MenuComplete` when the line starts with `<name> `, and the previous Tab function (default `TabCompleteNext`) otherwise.
+  When a pick leaves the line in a namespace that has entries, the handler opens that namespace's menu straight away,
+  so `sd <Tab>` can walk down the tree one pick at a time. Esc, typing, or reaching a script ends it.
 
 ### 8.4 bash
 

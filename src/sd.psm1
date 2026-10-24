@@ -661,17 +661,33 @@ Register-ArgumentCompleter -Native -CommandName $script:CmdName -ScriptBlock {
     } catch { }
 }
 
-# Tab opens the menu after "<name> ", and does whatever it did before everywhere else.
+# True if the command line $Line (ending in a space) is in a namespace that has entries, i.e. Tab has a next menu.
+function Test-SdNextMenu([string]$Line) {
+    $script:Cfg = Get-SdConfig
+    $r = Resolve-SdEntry @($Line.Trim() -split '\s+' | Select-Object -Skip 1)
+    $r.Kind -eq 'namespace' -and @(Get-SdItems $r.Dir).Count -gt 0
+}
+
+# Tab opens the menu after "<name> ", and does whatever it did before everywhere else. Picking a namespace
+# opens its menu straight away. (No GetNewClosure: the handler must run in this module, to see its functions.)
 if (Get-Module PSReadLine) {
-    $name = $script:CmdName
-    $prev = (Get-PSReadLineKeyHandler -Chord Tab).Function
-    if (-not [Microsoft.PowerShell.PSConsoleReadLine].GetMethod("$prev")) { $prev = 'TabCompleteNext' }
-    Set-PSReadLineKeyHandler -Key Tab -Description "$name menu completion" -ScriptBlock {
+    $script:PrevTab = (Get-PSReadLineKeyHandler -Chord Tab).Function
+    if (-not [Microsoft.PowerShell.PSConsoleReadLine].GetMethod("$script:PrevTab")) { $script:PrevTab = 'TabCompleteNext' }
+    Set-PSReadLineKeyHandler -Key Tab -Description "$script:CmdName menu completion" -ScriptBlock {
         $line = $cursor = $null
         [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
-        $fn = $line -match "^\s*$([regex]::Escape($name))\s" ? 'MenuComplete' : $prev
-        [Microsoft.PowerShell.PSConsoleReadLine]::$fn()
-    }.GetNewClosure()
+        if ($line -notmatch "^\s*$([regex]::Escape($script:CmdName))\s") {
+            return [Microsoft.PowerShell.PSConsoleReadLine]::$($script:PrevTab)()
+        }
+        # MenuComplete returns once a pick is made (or Esc reverts it); go on while the pick leads to another menu.
+        for ($i = 0; $i -lt 50; $i++) {
+            $before = $line
+            [Microsoft.PowerShell.PSConsoleReadLine]::MenuComplete()
+            [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+            $next = $line -ne $before -and $cursor -eq $line.Length -and $line.EndsWith(' ')
+            if (-not ($next -and (Test-SdNextMenu $line))) { break }
+        }
+    }
 }
 
 Export-ModuleMember -Function Invoke-Sd
