@@ -23,10 +23,25 @@ win  | 0 | winonly z              | winonly.bat: z
 unix | 1 | winonly                | no script or folder 'winonly'
 # folder + file of the same name (clash/ and clash.sh)
 all  | 1 | clash                  | ambiguous
-# dot-files and .ps1 never resolve
+# dot-files never resolve
 all  | 1 | .hidden               | no script or folder '.hidden'
-all  | 1 | ignored                | no script or folder 'ignored'
 all  | 1 | nothere                | no script or folder 'nothere'
+# .ps1 runs on Windows, in a child pwsh with the sd variables; it doesn't exist on Unix
+win  | 0 | ps1only a b            | ps1only.ps1: a b\nname=ps1only
+unix | 1 | ps1only                | no script or folder 'ps1only'
+# priority: .bat before .ps1 before .sh
+win  | 0 | ps1bat x               | ps1bat.bat: x
+win  | 0 | ps1both x              | ps1both.ps1: x
+unix | 0 | ps1both x              | ps1both.sh: x
+# cmd would reparse these in a .bat; a .ps1 gets them unchanged, empty arguments included
+win  | 0 | ps1only a%b^c&d!e      | ps1only.ps1: a%b^c&d!e
+win  | 0 | ps1only "" x           | ps1only.ps1:  x
+# exit codes: exit N, and an uncaught error is 1
+win  | 5 | ps1exit                |
+win  | 1 | ps1thrw                | ps1thrw failed
+# bundle: ps1bun.ps1 calls ps1bun.sh on Windows and passes on its exit code
+win  | 6 | ps1bun 1 2             | ps1bun.ps1: 1 2\nps1bun.sh: 1 2
+unix | 6 | ps1bun 1 2             | ps1bun.sh: 1 2
 all  | 1 | dev nothere            | no script or folder 'nothere'
 # bundle: build.bat calls build.sh on Windows; build.sh runs alone on Unix
 win  | 0 | dev build 1 2          | build.bat: 1 2\nbuild.sh: 1 2
@@ -47,8 +62,12 @@ unix | 0 |                        | both    ▸ Both, sh side
 win  | 0 |                        | winonly ▸ Windows only
 unix | 0 |                        | !winonly
 all  | 0 |                        | !.hidden
-all  | 0 |                        | !ignored
 all  | 0 |                        | !hooks
+# a "#Requires" line is not the description of a .ps1
+win  | 0 |                        | ps1only ▸ PowerShell only
+unix | 0 |                        | !ps1only
+win  | 0 |                        | ps1both ▸ Both, ps1 side
+unix | 0 |                        | ps1both ▸ Both, sh side
 # namespace listing: nested namespace first, bundle and loose script after, helper hidden
 all  | 0 | dev                    | sub/     Nested namespace\nbuild  ▸ Build the project\ndeploy ▸ Push to staging
 all  | 0 | dev                    | !helper
@@ -66,6 +85,12 @@ all  | 0 | --complete dev u       | build\tscript\tBuild the project\nsub\tdir\t
 all  | 0 | --complete dev build x | !\t
 # meta-commands
 all  | 0 | --complete --h        | --hooks
+# .ps1 scripts complete like any other, with their descriptions
+win  | 0 | --complete ps1o        | ps1only\tscript\tPowerShell only
+unix | 0 | --complete ps1o        | !ps1only
+win  | 0 | --complete ps1bu       | ps1bun\tscript\tPowerShell bundle
+# a .ps1 was reached: arguments are not completed
+win  | 0 | --complete ps1only x   | !\t
 
 # --- Hooks at run time; hooks.conf as shipped ----------------------------------------------------
 # before hook (entry 1) -> script -> after hook (entry 2); entry 5 names a missing hook: warning only
@@ -84,6 +109,7 @@ all  | 0 | hello c               | !hook
 all  | 0 | --which dev build 1 2  | name:        dev/build\nkind:        bundle
 win  | 0 | --which dev build 1 2  | build.bat\nruns with:   cmd\ndescription: Build the project\nargs:        1 2
 unix | 0 | --which dev build 1 2  | build.sh\nruns with:
+win  | 0 | --which ps1only a      | ps1only.ps1\nruns with:   pwsh\ndescription: PowerShell only\nargs:        a
 all  | 0 | --which hooked ok a     | BEFORE  pass      (ON,  1)\n  AFTER   after     (ON,  2)\n  BEFORE  fail      (OFF, 4)
 # --which runs nothing and fires no hooks
 all  | 0 | --which hooked ok a     | !pass hook:
@@ -98,6 +124,13 @@ all  | 0 | tmp made2 y            | args: y
 all  | 1 | --new tmp/made2        | exists
 all  | 0 | --new tmp/bun --bundle --sh | bun.sh
 all  | 0 | tmp bun z              | args: z
+# --ps1 alone just echoes; with --sh it hands off to the .sh. On Unix only the .sh of those runs.
+all  | 0 | --new tmp/mps --ps1    | mps.ps1
+win  | 0 | tmp mps a              | args: a
+unix | 1 | tmp mps                | no script or folder 'mps'
+all  | 0 | --new tmp/mps2 --ps1 --sh | mps2.ps1
+all  | 0 | tmp mps2 b             | args: b
+all  | 1 | --new tmp/mps --ps1    | exists
 # dev/build is a bundle, so a loose dev/build would be a conflict
 all  | 1 | --new dev/build        |
 
@@ -140,6 +173,13 @@ all  | 1 | --import out.tar.gz    | deploy.sh
 all  | 0 | --import out.tar.gz --force | --hooks on 6
 all  | 0 | --hooks               | 6  OFF  AFTER   dev/deploy
 all  | 0 | dev deploy z          | !pass hook:
+# every platform's files come along, .ps1 included
+all  | 0 | --export ps1.tar.gz ps1both | ps1both.ps1
+all  | 0 | --export ps1.tar.gz ps1both | ps1both.sh
+
+# --- A .ps1 hook -----------------------------------------------------------------------------------
+win  | 0 | --hooks add before ps1both pshook |
+win  | 0 | ps1both q             | pshook: before ps1both q\nps1both.ps1: q
 
 # --- Misc meta-commands --------------------------------------------------------------------------------
 all  | 0 | --help                | --hooks

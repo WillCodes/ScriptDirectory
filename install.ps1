@@ -97,7 +97,7 @@ if ((Test-Path -LiteralPath "$Root\hooks.conf" -PathType Leaf) -and -not (Test-P
 #   OFF    AFTER   dev/*       notify
 # state: ON | OFF.  when: BEFORE | AFTER.
 # target: a script named from the sd root as you run it, or a glob; '*' matches any characters, including '/'.
-# hook: a script in this folder, named from here (lint for lint.bat or lint.sh).
+# hook: a script in this folder, named from here (lint for lint.bat, lint.ps1 or lint.sh).
 # Add one with: --hooks add BEFORE dev/build lint
 # Manage entries with: --hooks, --hooks add|rm|on|off|edit
 '@

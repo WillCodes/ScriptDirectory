@@ -35,12 +35,12 @@ shopt -u patsub_replacement 2>/dev/null   # bash 5.2: a "&" in a ${x//a/b} repla
 STATUS=0                                  # the exit code, left by sd_error and sd_with_hooks
 nl=$'\n'; tab=$'\t'
 EXTS=(.sh "")                             # runnable extensions in priority order; "" = extensionless
-[ -n "$WINDOWS" ] && EXTS=(.bat .cmd .sh "")
-ALL_EXTS=(.bat .cmd .sh "")               # --new and --export look at every platform's files
+[ -n "$WINDOWS" ] && EXTS=(.bat .cmd .ps1 .sh "")
+ALL_EXTS=(.bat .cmd .ps1 .sh "")          # --new and --export look at every platform's files
 
 # Meta-commands: name, usage, description. (--complete is hidden.)
 M_NAME=(--help --hooks --new --which --export --import)
-M_USAGE=('' '[add|rm|on|off|edit ...]' '<path> [--bundle] [--bat | --sh]' '<word>... [args...]' '<file> <path>... [--hooks]' '<file> [--force]')
+M_USAGE=('' '[add|rm|on|off|edit ...]' '<path> [--bundle] [--bat | --ps1 | --sh]' '<word>... [args...]' '<file> <path>... [--hooks]' '<file> [--force]')
 M_DESC=('Show this help' 'Manage hooks' 'Create a script' 'Show what would run' 'Export scripts (and hooks)' 'Import an export file')
 
 # ---- Output, config, small helpers ------------------------------------------------------------
@@ -179,7 +179,7 @@ sd_resolve_error() {
 # ---- Descriptions and listing -----------------------------------------------------------------
 
 # DESC = the text of the first comment line among the first 10 lines of <file>, a shebang on line 1 skipped.
-# A .bat/.cmd (only seen with the Windows rules) uses its first "::" or "REM " line.
+# A .bat/.cmd (only seen with the Windows rules) uses its first "::" or "REM " line; a .ps1 skips "#requires" lines.
 sd_file_description() {
     local line i=0
     DESC=
@@ -191,7 +191,8 @@ sd_file_description() {
                 sd_trim "$TRIM"; DESC=$TRIM
                 return
             fi
-        elif [[ $TRIM == '#'* ]] && ! { [ $i -eq 0 ] && [[ $TRIM == '#!'* ]]; }; then
+        elif [[ $TRIM == '#'* ]] && ! { [ $i -eq 0 ] && [[ $TRIM == '#!'* ]]; } &&
+             ! [[ $1 == *.[pP][sS]1 && $TRIM == '#'[rR][eE][qQ][uU][iI][rR][eE][sS]* ]]; then
             sd_trim "${TRIM#?}"; DESC=$TRIM
             return
         fi
@@ -778,7 +779,7 @@ sd_help() {
     echo
     echo 'meta-commands:'
     for i in "${!M_NAME[@]}"; do
-        sd_pad "${M_NAME[i]}" 9 n; sd_pad "${M_USAGE[i]}" 34 u
+        sd_pad "${M_NAME[i]}" 9 n; sd_pad "${M_USAGE[i]}" 40 u
         echo "  $n$u ${M_DESC[i]}"
     done
 }
@@ -800,25 +801,25 @@ sd_which() {
     sd_show_which_hooks "$R_NAME"
 }
 
-# sd_template <ext> <name> <has .sh>: TEMPLATE = templates/script<ext> for a script called <name>. The .bat
-# hands off to the .sh unless there is no .sh, then it just echoes. LF for .sh, CRLF for .bat.
+# sd_template <ext> <name> <has .sh>: TEMPLATE = templates/script<ext> for a script called <name>. The .bat and .ps1
+# hand off to the .sh unless there is no .sh, then they just echo. LF for .sh and .ps1, CRLF for .bat.
 sd_template() {
-    local text line
+    local text line echo_line=
     [ -f "$REPO/templates/script$1" ] || return 1
     IFS= read -r -d '' text < "$REPO/templates/script$1"   # status 1 is just "no NUL before EOF"
     text=${text//$'\r'/}
     text=${text//<name>/$2}
-    if [ "$1" = .bat ]; then
-        if [ "$3" != 1 ]; then
-            TEMPLATE=
-            while IFS= read -r line; do
-                [[ $line == 'bash '* ]] && line='echo args: %*'
-                TEMPLATE=$TEMPLATE$line$nl
-            done <<<"${text%$nl}"
-            text=$TEMPLATE
-        fi
-        text=${text//$nl/$'\r\n'}
+    [ "$1" = .bat ] && echo_line='echo args: %*'
+    [ "$1" = .ps1 ] && echo_line='Write-Output "args: $args"'
+    if [ -n "$echo_line" ] && [ "$3" != 1 ]; then
+        TEMPLATE=
+        while IFS= read -r line; do
+            [[ $line == 'bash '* ]] && line=$echo_line
+            TEMPLATE=$TEMPLATE$line$nl
+        done <<<"${text%$nl}"
+        text=$TEMPLATE
     fi
+    [ "$1" = .bat ] && text=${text//$nl/$'\r\n'}
     TEMPLATE=$text
 }
 
@@ -833,7 +834,7 @@ sd_editor() {
 }
 
 sd_new() {
-    local a rel seg loc base target f parent bad=0 sh=0 bat=0 bundle=0
+    local a rel seg loc base target f parent bad=0 sh=0 bat=0 ps1=0 bundle=0
     local -a flags=() paths=() segs=() new=() clashes=()
     for a; do case $a in --*) flags+=("$a") ;; *) paths+=("$a") ;; esac; done
     rel=
@@ -845,18 +846,19 @@ sd_new() {
     IFS=/ read -ra segs <<<"$rel"
     for seg in "${segs[@]}"; do [[ -z $seg || $seg == [-.]* || $seg == *[[:space:]]* ]] && bad=1; done
     for a in "${flags[@]}"; do
-        case $a in --bundle) bundle=1 ;; --sh) sh=1 ;; --bat) bat=1 ;; *) bad=1 ;; esac
+        case $a in --bundle) bundle=1 ;; --sh) sh=1 ;; --bat) bat=1 ;; --ps1) ps1=1 ;; *) bad=1 ;; esac
     done
     if [ $bad = 1 ]; then
-        sd_error 'usage: --new <path> [--bundle] [--bat | --sh]  (names: no spaces, not starting with - or .)'
+        sd_error 'usage: --new <path> [--bundle] [--bat | --ps1 | --sh]  (names: no spaces, not starting with - or .)'
         return
     fi
-    [ $sh = 0 ] && [ $bat = 0 ] && sh=1   # on Unix a plain --new makes only the .sh
+    [ $sh = 0 ] && [ $bat = 0 ] && [ $ps1 = 0 ] && sh=1   # on Unix a plain --new makes only the .sh
 
     loc=$ROOT/$rel base=${loc##*/} target=$loc
     [ $bundle = 1 ] && target=$loc/$base
     [ $sh = 1 ] && new+=("$target.sh")
     [ $bat = 1 ] && new+=("$target.bat")
+    [ $ps1 = 1 ] && new+=("$target.ps1")
 
     # Existing target files, or an entry that would make the name ambiguous.
     EXTS=("${ALL_EXTS[@]}")

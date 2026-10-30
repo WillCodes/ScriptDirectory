@@ -2,13 +2,13 @@
 # Runs inside the user's shell, so it never calls `exit`: the result is left in $global:LASTEXITCODE.
 
 # Runnable extensions in priority order. '' = extensionless.
-$script:Exts = '.bat', '.cmd', '.sh', ''
+$script:Exts = '.bat', '.cmd', '.ps1', '.sh', ''
 
 # Meta-commands: name, usage, description. (--complete is hidden.)
 $script:Meta = @(
     @('--help',   '',                                  'Show this help'),
     @('--hooks',  '[add|rm|on|off|edit ...]',          'Manage hooks'),
-    @('--new',    '<path> [--bundle] [--bat | --sh]',  'Create a script'),
+    @('--new',    '<path> [--bundle] [--bat | --ps1 | --sh]', 'Create a script'),
     @('--which',  '<word>... [args...]',               'Show what would run'),
     @('--export', '<file> <path>... [--hooks]',        'Export scripts (and hooks)'),
     @('--import', '<file> [--force]',                  'Import an export file')
@@ -111,7 +111,8 @@ function Get-SdFileDescription($File) {
         $line = "$($lines[$i])".Trim()
         if ($File.Extension -in '.bat', '.cmd') {
             if ($line -match '^(?:::|REM )\s*(.*)$') { return $Matches[1] }
-        } elseif ($line.StartsWith('#') -and -not ($i -eq 0 -and $line.StartsWith('#!'))) {
+        } elseif ($line.StartsWith('#') -and -not ($i -eq 0 -and $line.StartsWith('#!')) -and
+                  -not ($File.Extension -eq '.ps1' -and $line -match '^#requires\b')) {
             return $line.Substring(1).Trim()
         }
     }
@@ -221,18 +222,21 @@ function Invoke-WithEnv([hashtable]$Vars, [scriptblock]$Body) {
 function Invoke-SdScript($Entry, [string[]]$ScriptArgs) {
     $file = $Entry.File.FullName
     $isCmd = $Entry.File.Extension -in '.bat', '.cmd'
+    $isPs1 = $Entry.File.Extension -eq '.ps1'
     $bash = Get-SdBash
-    if (-not $isCmd -and -not $bash) {
+    if (-not $isCmd -and -not $isPs1 -and -not $bash) {
         return Write-SdError 'bash not found: install Git for Windows (and put git on PATH) to run .sh scripts'
     }
-    if (-not $isCmd -and [array]::IndexOf([IO.File]::ReadAllBytes($file), [byte]13) -ge 0) {
+    if (-not $isCmd -and -not $isPs1 -and [array]::IndexOf([IO.File]::ReadAllBytes($file), [byte]13) -ge 0) {
         Write-SdWarning "$file has CRLF line endings, bash will probably fail on it"
     }
     $vars = @{ SD_ROOT = $script:Cfg.Root; SD_NAME = $Entry.Name; SD_DIR = $Entry.Dir; MSYS_NO_PATHCONV = '1' }
-    if ($bash -and $bash.ViaGit) { $vars.PATH = (Split-Path $bash.Path) + ";$env:PATH" }   # so a .bat can call bash
+    if ($bash -and $bash.ViaGit) { $vars.PATH = (Split-Path $bash.Path) + ";$env:PATH" }   # so a .bat or .ps1 can call bash
     $global:LASTEXITCODE = 0
     Invoke-WithEnv $vars {
-        if ($isCmd) { & $file @ScriptArgs } else { & $bash.Path ($file -replace '\\', '/') @ScriptArgs }
+        if ($isCmd) { & $file @ScriptArgs }
+        elseif ($isPs1) { & "$PSHOME\pwsh.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File $file @ScriptArgs }   # a child: its exit can't close this shell
+        else { & $bash.Path ($file -replace '\\', '/') @ScriptArgs }
     }
 }
 
@@ -331,7 +335,7 @@ function Get-SdHooksAddHelp {
     $name = $script:Cfg.Name
     "usage: --hooks add <BEFORE|AFTER> <target> <hook>",
     "  <target>  a script, named from the sd root as you run it (dev/build), or a glob (dev/*)",
-    "  <hook>    a script in $($script:Cfg.Root)\hooks, named from there (lint for hooks/lint.bat or hooks/lint.sh)",
+    "  <hook>    a script in $($script:Cfg.Root)\hooks, named from there (lint for hooks/lint.bat, hooks/lint.ps1 or hooks/lint.sh)",
     "example: $name --hooks add BEFORE dev/build lint",
     "  runs hooks/lint before every '$name dev build'" -join "`n"
 }
@@ -540,7 +544,7 @@ function Show-SdHelp {
     "  $name <word>... [args...]    run a script, or list a namespace"
     ''
     'meta-commands:'
-    foreach ($m in $script:Meta) { '  {0,-9}{1,-34} {2}' -f $m[0], $m[1], $m[2] }
+    foreach ($m in $script:Meta) { '  {0,-9}{1,-40} {2}' -f $m[0], $m[1], $m[2] }
 }
 
 function Show-SdWhich($R) {
@@ -549,7 +553,7 @@ function Show-SdWhich($R) {
         "namespace: $($R.Name ? $R.Name : '(root)')"
         return Format-SdItems @(Get-SdItems $R.Dir)
     }
-    $runner = if ($R.File.Extension -in '.bat', '.cmd') { 'cmd' } else {
+    $runner = if ($R.File.Extension -in '.bat', '.cmd') { 'cmd' } elseif ($R.File.Extension -eq '.ps1') { 'pwsh' } else {
         $bash = Get-SdBash
         "bash ($($bash ? $bash.Path : 'not found'))"
     }
@@ -562,14 +566,15 @@ function Show-SdWhich($R) {
     Show-SdWhichHooks $R.Name
 }
 
-# The contents of templates\script.<ext> for a script called $Name. The .bat hands off to the .sh
-# unless there is no .sh, then it just echoes. LF for .sh, CRLF for .bat.
+# The contents of templates\script.<ext> for a script called $Name. The .bat and .ps1 hand off to the .sh
+# unless there is no .sh, then they just echo. LF for .sh and .ps1, CRLF for .bat.
 function Get-SdTemplate([string]$Ext, [string]$Name, [bool]$HasSh) {
     $text = (Get-Content -Raw "$PSScriptRoot\..\templates\script$Ext").Replace("`r`n", "`n").Replace('<name>', $Name)
-    if ($Ext -eq '.bat') {
-        if (-not $HasSh) { $text = $text -replace '(?m)^bash .*$', 'echo args: %*' }
-        $text = $text.Replace("`n", "`r`n")
+    if (-not $HasSh) {
+        if ($Ext -eq '.bat') { $text = $text -replace '(?m)^bash .*$', 'echo args: %*' }
+        if ($Ext -eq '.ps1') { $text = $text -replace '(?m)^bash .*$', 'Write-Output "args: $$args"' }
     }
+    if ($Ext -eq '.bat') { $text = $text.Replace("`n", "`r`n") }
     $text
 }
 
@@ -589,16 +594,16 @@ function New-SdScript([string[]]$Rest) {
     $paths = @($Rest | Where-Object { $_ -notlike '--*' })
     $rel = $paths.Count -eq 1 ? ($paths[0] -replace '\\', '/').Trim('/') : ''
     $badName = $rel -eq '' -or ($rel.Split('/') | Where-Object { $_ -eq '' -or $_ -match '^[-.]|\s' })
-    if ($badName -or ($flags | Where-Object { $_ -notin '--bundle', '--sh', '--bat' })) {
-        return Write-SdError 'usage: --new <path> [--bundle] [--bat | --sh]  (names: no spaces, not starting with - or .)'
+    if ($badName -or ($flags | Where-Object { $_ -notin '--bundle', '--sh', '--bat', '--ps1' })) {
+        return Write-SdError 'usage: --new <path> [--bundle] [--bat | --ps1 | --sh]  (names: no spaces, not starting with - or .)'
     }
-    $sh = $flags -contains '--sh'; $bat = $flags -contains '--bat'
-    if (-not $sh -and -not $bat) { $sh = $bat = $true }
+    $sh = $flags -contains '--sh'; $bat = $flags -contains '--bat'; $ps1 = $flags -contains '--ps1'
+    if (-not $sh -and -not $bat -and -not $ps1) { $sh = $bat = $true }
 
     $loc = Join-Path $script:Cfg.Root $rel
     $base = Split-Path $loc -Leaf
     $target = $flags -contains '--bundle' ? (Join-Path $loc $base) : $loc   # path without extension
-    $new = @(if ($sh) { "$target.sh" }; if ($bat) { "$target.bat" })
+    $new = @(if ($sh) { "$target.sh" }; if ($bat) { "$target.bat" }; if ($ps1) { "$target.ps1" })
 
     # Existing target files, or an entry that would make the name ambiguous.
     $clashes = @($new | Where-Object { Test-Path -LiteralPath $_ })

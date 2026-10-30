@@ -10,7 +10,7 @@ You get a listing of what is there, tab completion with descriptions, optional b
 
 Inspired by [ianthehenry/sd](https://github.com/ianthehenry/sd). It is a different, much smaller tool: only the meta-commands listed below exist.
 
-- **Windows:** `.bat` scripts run natively, `.sh` scripts run through Git for Windows' bash. Works from PowerShell, cmd and git-bash.
+- **Windows:** `.bat` scripts run natively, `.ps1` scripts run in a new `pwsh`, `.sh` scripts run through Git for Windows' bash. Works from PowerShell, cmd and git-bash.
 - **Unix:** `.sh` and extensionless scripts, bash completion.
 
 ## Quick start
@@ -62,10 +62,10 @@ A script is found by walking the words left to right, one folder per word. Every
 ```
 
 - **Namespace:** a folder that is not a bundle. `sd dev` lists it, `sd dev build` steps in.
-- **Loose script:** `name.bat`, `name.cmd`, `name.sh` or an extensionless `name`.
+- **Loose script:** `name.bat`, `name.cmd`, `name.ps1`, `name.sh` or an extensionless `name`.
 - **Bundle:** a folder holding a script of the same name (`dev/build/build.sh`). It acts as one script, can't have subcommands (`sd dev build release` passes `release` to it), and its other files are private.
-- **Priority:** Windows picks `.bat`, then `.cmd`, then `.sh`, then extensionless. Unix picks `.sh`, then extensionless. A name with no file for the current platform doesn't exist there: it is not run, listed or completed.
-- **Ignored:** anything starting with `.`, and every `.ps1` file (never run). At the root, also `hooks/`.
+- **Priority:** Windows picks `.bat`, then `.cmd`, then `.ps1`, then `.sh`, then extensionless. Unix picks `.sh`, then extensionless. A name with no file for the current platform doesn't exist there: it is not run, listed or completed. So a `.ps1` is Windows-only, like a `.bat`.
+- **Ignored:** anything starting with `.`. At the root, also `hooks/`.
 - **Conflicts:** a folder and a loose script with the same name (`clash/` and `clash.sh`) is an error when you use it, and shows as `!  ambiguous` in listings.
 - **Names:** no spaces, and must not start with `-` (a first word starting with `--` is a meta-command).
 - Matching is case-sensitive on Unix, case-insensitive on Windows. Only completion is fuzzy.
@@ -95,6 +95,7 @@ The listing and completion menu show a one-line description:
 | File | Description is... |
 |---|---|
 | `.sh` / extensionless | the first `#` comment line (not the `#!` line) |
+| `.ps1` | the first `#` comment line (not a `#Requires` line) |
 | `.bat` / `.cmd` | the first `::` or `REM ` line (after `@echo off`) |
 | namespace | the first non-empty line of `<folder>/.help` |
 
@@ -174,14 +175,14 @@ $ sd --hooks off 3                         # also: on <n>, rm <n>, edit
 | Command | Does |
 |---|---|
 | `sd --help` | usage and this list |
-| `sd --new <path> [--bundle] [--bat \| --sh]` | create a script from a template (below) |
+| `sd --new <path> [--bundle] [--bat \| --ps1 \| --sh]` | create a script from a template (below) |
 | `sd --which <word>... [args...]` | show what would run, without running it |
 | `sd --hooks [add\|rm\|on\|off\|edit ...]` | list and manage hooks |
 | `sd --export <file> <path>... [--hooks]` | export scripts, and with `--hooks` their hooks |
 | `sd --import <file> [--force]` | import an export file |
 | `sd --complete ...` | completion protocol (hidden from `--help`) |
 
-`--new` takes a path relative to the root, without extension, and creates missing folders. On Windows it makes a `.bat` that hands off to a `.sh`; on Unix just a `.sh` (marked executable). `--sh` / `--bat` create only that file, `--bundle` creates `<path>/<name>.*`. It refuses to overwrite anything or to create an ambiguous name. `sd --new hooks/lint` makes a hook.
+`--new` takes a path relative to the root, without extension, and creates missing folders. On Windows it makes a `.bat` that hands off to a `.sh`; on Unix just a `.sh` (marked executable). `--sh` / `--bat` / `--ps1` create only that file (combine them for a pair: `--ps1 --sh` makes a `.ps1` that hands off to a `.sh`), `--bundle` creates `<path>/<name>.*`. It refuses to overwrite anything or to create an ambiguous name. `sd --new hooks/lint` makes a hook.
 
 `--which` resolves like running does and prints (real output, path shortened):
 
@@ -208,7 +209,7 @@ Unknown meta-command: error plus the help text, exit 1. Errors go to stderr and 
 $ sd --export team.tar.gz hooked tools hooks/lint --hooks
 ```
 
-Each `<path>` is a script, a namespace (taken whole) or `hooks/<name>`. All platforms' files for a script come along (`.bat`, `.sh`, whole bundles). **Hooks are left out unless you pass `--hooks`**, which adds the `hooks.conf` entries whose target matches an exported script, and the hook scripts they use. A hook you name (`hooks/lint`) always comes along, with its entries. The archive is a `.tar.gz` with files at their root-relative paths plus `sd-export.conf` holding the entries.
+Each `<path>` is a script, a namespace (taken whole) or `hooks/<name>`. All platforms' files for a script come along (`.bat`, `.ps1`, `.sh`, whole bundles). **Hooks are left out unless you pass `--hooks`**, which adds the `hooks.conf` entries whose target matches an exported script, and the hook scripts they use. A hook you name (`hooks/lint`) always comes along, with its entries. The archive is a `.tar.gz` with files at their root-relative paths plus `sd-export.conf` holding the entries.
 
 ```
 $ sd --import team.tar.gz
@@ -266,7 +267,9 @@ Profile changes sit between `# >>> sd >>>` and `# <<< sd <<<` and are replaced, 
 | `SD_NAME` | script name, e.g. `dev/build` |
 | `SD_DIR` | the folder holding the running file |
 
-Scripts run in your current folder (`sd` never changes it), with stdin/stdout/stderr passed through, so interactive scripts work. Scripts can call `sd` again: from PowerShell, from `.bat` files and from git-bash, all routes end up at the same PowerShell core. On Windows, if bash was found through `git.exe`, its folder is put on `PATH` while scripts run, so a `.bat` can call `bash`.
+Scripts run in your current folder (`sd` never changes it), with stdin/stdout/stderr passed through, so interactive scripts work. Scripts can call `sd` again: from PowerShell, from `.bat` files and from git-bash, all routes end up at the same PowerShell core. On Windows, if bash was found through `git.exe`, its folder is put on `PATH` while scripts run, so a `.bat` or `.ps1` can call `bash`.
+
+A `.ps1` runs in a new `pwsh` (`-NoProfile -ExecutionPolicy Bypass`), not in your session, so it can't change your shell's variables or close it, and your execution policy doesn't apply to it. That costs a `pwsh` start-up per run. Its exit code is what it passes to `exit`, or 1 after an uncaught error. A failing native command doesn't count unless the script passes it on (`exit $LASTEXITCODE`).
 
 ## Uninstall
 
@@ -312,4 +315,3 @@ Setup warns about anything missing and installs nothing. `.sh` files with CRLF l
 - The bash core has been tested under git-bash 5.2, but not yet on a real Linux or macOS, or on bash 3.2.
 - On macOS, login shells read `~/.bash_profile`, so make it source `~/.bashrc`.
 - The bash completion list shows one blank extra entry. It stops readline from typing the entries' common prefix (or a lone entry) into your line.
-- `.ps1` user scripts are never run.
